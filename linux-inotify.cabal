@@ -17,4 +17,4 @@ library
   -- other-modules:
   build-depends:       base, unix, bytestring
 
-  ghc-options: -Wall
+  ghc-options: -Wall -O
