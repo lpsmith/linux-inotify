@@ -58,8 +58,25 @@ data Inotify = Inotify
 bufferSize :: Int
 bufferSize = 4096
 
+{-
+-- I'm tempted to define 'Watch' as
 
--- I'm half tempted to make this an fd, wd pair
+data Watch = Watch
+    { fd :: {-# UNPACK #-} !Fd
+    , wd :: {-# UNPACK #-} !CInt
+    }
+
+-- and then give rmWatch the type
+
+rmWatch :: Watch -> IO ()
+
+-- An advantage would be that it would make the API possibly
+-- easier to use,  and harder to misuse.   A disadvantage is
+-- that this is a slightly thicker wrapper around the system calls,
+-- and that storing Watches in Maps would be less efficient, at least
+-- somewhat.
+-}
+
 newtype Watch = Watch CInt deriving (Show)
 
 newtype EventMask = EventMask CUInt deriving (Show)
