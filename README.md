@@ -30,12 +30,14 @@ processor.
 
 Some of the downsides are:
 
-1.   `linux-notify` currently requires linux 2.6.28,  even though
-`inotify` support debuted in linux 2.6.13.    I would kind of like to
-fix this at some point,  but it isn't a personal priority.
+1.   Due to the use of `inotify_init1`,  `linux-notify` currently
+requires linux 2.6.27 or later,  even though `inotify` support
+debuted in linux 2.6.13.   You can check which version of linux is
+on a machine via `uname -a`.   I would like to fix this at some point,
+but it isn't a personal priority.
 
 2.   `linux-notify` requires GHC 7.0.2 or later,  whereas `hinotify`
-works with many versions of GHC 6.   I have no plans on fixing this.
+works with many versions of GHC 6.   I have no plans to fix this.
 
 3.   `linux-notify` is currently just a quick proof of concept.
 Documentation is missing.  The API is still in flux and needs

@@ -142,6 +142,9 @@ addFinalizerOnce :: ForeignPtr a -> IO () -> IO ()
 addFinalizerOnce = FC.addForeignPtrFinalizer
 #endif
 
+-- | Creates an inotify socket descriptor that watches can be
+-- added to and events can be read from.
+
 init :: IO Inotify
 init = do
     fd <- Fd <$> throwErrnoIfMinus1 "System.Linux.Inotify.init"
@@ -153,11 +156,19 @@ init = do
     return $! Inotify{..}
   where flags = (#const IN_NONBLOCK) .|. (#const IN_CLOEXEC)
 
+-- | Adds a watch on the inotify descriptor,  returns a watch descriptor.
+-- This function is thread safe.
+
 addWatch :: Inotify -> FilePath -> EventMask -> IO Watch
 addWatch Inotify{fd} path !mask =
     withCString path $ \cpath -> do
       Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch" path
                   (c_inotify_add_watch fd cpath mask)
+
+-- | A variant of 'addWatch' that operates on a 'RawFilePath', which is
+-- a file path represented as strict 'ByteString'.   One weakness of the
+-- current implementation is that if 'addWatch_' throws an 'IOException',
+-- then any unicode paths will be mangled in the error message.
 
 addWatch_ :: Inotify -> RawFilePath -> EventMask -> IO Watch
 addWatch_ Inotify{fd} path !mask =
@@ -171,9 +182,13 @@ addWatch_ Inotify{fd} path !mask =
 --   associated with the particular inotify port,  otherwise undefined
 --   behavior can happen.
 --
---   This function is thread safe. This binding ignores the system
---   call's errno when it is @EINVAL@, so it is ok to delete a previously
+--   This function is thread safe. This binding ignores @inotify_rm_watch@'s
+--   errno when it is @EINVAL@, so it is ok to delete a previously
 --   removed or non-existent watch descriptor.
+--
+--   However long lived applications that set and remove many watches
+--   should still endeavor to avoid calling `rmWatch` on removed
+--   watch descriptors,  due to possible wrap-around bugs.
 
 --   The (small) downside to this behavior is that it also ignores the
 --   case when,  for some slightly strange reason, 'rmWatch' is called
@@ -244,7 +259,6 @@ getEvent inotify@Inotify{..} = do
     else do
       readMessage start inotify
 
-
 readMessage :: Int -> Inotify -> IO Event
 readMessage start Inotify{..} = do
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
@@ -258,6 +272,18 @@ readMessage start Inotify{..} = do
             else B.packCString ((#ptr struct inotify_event, name) ptr)
   writeIORef startRef $! (start + (#size struct inotify_event) + len)
   return $! Event{..}
+
+
+-- | Closes an inotify descriptor,  freeing the resources associated
+-- with it.  This will also raise an 'IOException' in any threads that
+-- are blocked on  'getEvent'.
+--
+-- Although using a descriptor after it is closed is likely to raise
+-- an exception,  it is not safe to use the descriptor after it is closed.
+-- However,  it is safe to call 'close' multiple times.
+--
+-- Descriptors will be closed after they are garbage collected, via
+-- a finalizer,  although it is often preferable to call 'close' yourself.
 
 close :: Inotify -> IO ()
 close Inotify{buffer} = finalizeForeignPtr buffer
