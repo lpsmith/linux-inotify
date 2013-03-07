@@ -13,6 +13,8 @@ module System.Linux.Inotify
      , addWatch_
      , rmWatch
      , getEvent
+     , getEventNonBlocking
+     , getEventFromBuffer
      , close
      , in_ACCESS
      , in_ATTRIB
@@ -272,6 +274,46 @@ readMessage start Inotify{..} = do
             else B.packCString ((#ptr struct inotify_event, name) ptr)
   writeIORef startRef $! (start + (#size struct inotify_event) + len)
   return $! Event{..}
+
+
+-- | Returns an inotify event only if one is immediately available.
+--
+--   One possible downside of the current implementation is that
+--   returning 'Nothing' necessarily results in a system call.
+
+getEventNonBlocking :: Inotify -> IO (Maybe Event)
+getEventNonBlocking inotify@Inotify{..} = do
+    start <- readIORef startRef
+    end   <- readIORef endRef
+    if start >= end
+    then do
+      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
+      numBytes <- c_unsafe_read fd ptr (fromIntegral bufferSize)
+      if numBytes == -1
+      then do
+        err <- getErrno
+        if err == eAGAIN || err == eWOULDBLOCK
+        then return Nothing
+        else if err == eINTR
+             then getEventNonBlocking inotify
+             else throwErrno "System.Linux.Inotify.getEventNonBlocking"
+      else do
+        writeIORef endRef (fromIntegral numBytes)
+        Just <$> readMessage 0 inotify
+    else do
+      Just <$> readMessage start inotify
+
+
+-- | Returns an inotify event only if one is available in 'Inotify's
+--   buffer.  This won't ever make a system call.
+
+getEventFromBuffer :: Inotify -> IO (Maybe Event)
+getEventFromBuffer inotify@Inotify{..} = do
+    start <- readIORef startRef
+    end   <- readIORef endRef
+    if start >= end
+    then return Nothing
+    else Just <$> readMessage start inotify
 
 
 -- | Closes an inotify descriptor,  freeing the resources associated
