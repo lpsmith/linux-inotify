@@ -162,7 +162,7 @@ addWatch Inotify{fd} path !mask =
 addWatch_ :: Inotify -> RawFilePath -> EventMask -> IO Watch
 addWatch_ Inotify{fd} path !mask =
     B.useAsCString path $ \cpath -> do
-      Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch_" 
+      Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch_"
                                          (B8.unpack path)
                   (c_inotify_add_watch fd cpath mask)
 

@@ -31,19 +31,10 @@ Some of the downsides are:
 `inotify` support debuted in linux 2.6.13.    I would kind of like to
 fix this at some point,  but it isn't a personal priority.
 
-2.   `linux-notify` requires GHC 7.0.2 or later,  whereas `hinotify` 
+2.   `linux-notify` requires GHC 7.0.2 or later,  whereas `hinotify`
 works with many versions of GHC 6.   I have no plans on fixing this.
 
 3.   `linux-notify` is currently just a quick proof of concept.
 Documentation is missing.  The API is still in flux and needs
 expanding.  I've only performed the most preliminary of smoke tests,
 and I haven't done any performance testing.
-
-
-
-
-
-
-
-
-
