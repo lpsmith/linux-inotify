@@ -127,7 +127,7 @@ init = do
     buffer   <- mallocForeignPtrBytes bufferSize
     startRef <- newIORef 0
     endRef   <- newIORef 0
-    return Inotify{..}
+    return $! Inotify{..}
   where flags = (#const IN_NONBLOCK) .|. (#const IN_CLOEXEC)
 
 addWatch :: Inotify -> FilePath -> EventMask -> IO Watch
@@ -227,7 +227,7 @@ readMessage start Inotify{..} = do
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
   writeIORef startRef $! (start + (#size struct inotify_event) + len)
-  return Event{..}
+  return $! Event{..}
 
 close :: Inotify -> IO ()
 close Inotify{fd} = closeFdWith closeFd fd
