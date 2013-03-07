@@ -53,7 +53,7 @@ data Inotify = Inotify
     , buffer   :: {-# UNPACK #-} !(ForeignPtr CChar)
     , startRef :: !(IORef Int)
     , endRef   :: !(IORef Int)
-    }
+    } deriving (Eq)
 
 bufferSize :: Int
 bufferSize = 4096
@@ -77,9 +77,9 @@ rmWatch :: Watch -> IO ()
 -- somewhat.
 -}
 
-newtype Watch = Watch CInt deriving (Show)
+newtype Watch = Watch CInt deriving (Eq, Ord, Show)
 
-newtype EventMask = EventMask CUInt deriving (Show)
+newtype EventMask = EventMask CUInt deriving (Eq, Show)
 
 instance Monoid EventMask where
    mempty = EventMask 0
