@@ -17,15 +17,18 @@ instead of implementing a callback API.
 
 2.  `linux-notify` avoids most of GHC's standard IO handling code,
 relying on plain system calls with minimal overhead in Haskell-land.
-(It does however,  make good use of GHC's IO manager via nonblocking
-inotify sockets and `threadWaitRead`,  so `getEvent` is efficient.)
+(However, it still does make good use of GHC's IO manager via
+nonblocking inotify sockets and `threadWaitRead`,  so `getEvent` is
+still efficient.)
 
 3.  `linux-notify` does not call `forkIO`, which means less context
-switching and scheduling overhead, especially in some contexts.
+switching and scheduling overhead, especially in some contexts, e.g.
+when `hinotify`'s particular event router isn't a very good fit for
+your application,  or you are implementing a following logfile
+processor.
 
 
 Some of the downsides are:
-
 
 1.   `linux-notify` currently requires linux 2.6.28,  even though
 `inotify` support debuted in linux 2.6.13.    I would kind of like to
