@@ -10,6 +10,7 @@ module System.Linux.Inotify
      , Event(..)
      , init
      , addWatch
+     , addWatch_
      , rmWatch
      , getEvent
      , close
@@ -33,6 +34,7 @@ module System.Linux.Inotify
 import Prelude hiding (init)
 
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
 import Control.Applicative
 import Data.Monoid
 import Control.Concurrent ( threadWaitRead )
@@ -51,6 +53,7 @@ import Foreign as Unsafe
 #endif
 import Foreign.C
 import qualified Foreign.Concurrent as FC
+import System.Posix.ByteString.FilePath (RawFilePath)
 
 data Inotify = Inotify
     { fd       :: {-# UNPACK #-} !Fd
@@ -154,6 +157,13 @@ addWatch :: Inotify -> FilePath -> EventMask -> IO Watch
 addWatch Inotify{fd} path !mask =
     withCString path $ \cpath -> do
       Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch" path
+                  (c_inotify_add_watch fd cpath mask)
+
+addWatch_ :: Inotify -> RawFilePath -> EventMask -> IO Watch
+addWatch_ Inotify{fd} path !mask =
+    B.useAsCString path $ \cpath -> do
+      Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch_" 
+                                         (B8.unpack path)
                   (c_inotify_add_watch fd cpath mask)
 
 
