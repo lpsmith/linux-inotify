@@ -37,6 +37,9 @@ import Control.Applicative
 import Data.Monoid
 import Control.Concurrent ( threadWaitRead )
 import GHC.Conc ( closeFdWith )
+#if __GLASGOW_HASKELL__ < 706
+import Control.Concurrent.MVar
+#endif
 import Control.Monad
 import System.Posix
 import Data.IORef
@@ -47,6 +50,7 @@ import qualified Foreign.ForeignPtr.Unsafe as Unsafe
 import Foreign as Unsafe
 #endif
 import Foreign.C
+import qualified Foreign.Concurrent as FC
 
 data Inotify = Inotify
     { fd       :: {-# UNPACK #-} !Fd
@@ -120,11 +124,27 @@ data Event = Event
    , name   :: {-# UNPACK #-} !B.ByteString
    } deriving (Show)
 
+#if __GLASGOW_HASKELL__ < 706
+-- | Workaround for bug in 'FC.newForeignPtr' before base 4.6.  Ensure the
+-- finalizer is only run once, to prevent a segfault.  See GHC ticket #7170
+--
+-- Note that 'getvalue' and 'maybeBsFromForeignPtr' do not need this
+-- workaround, since their finalizers are just 'touchForeignPtr' calls.
+addFinalizerOnce :: ForeignPtr a -> IO () -> IO ()
+addFinalizerOnce ptr fin = do
+    mv <- newMVar fin
+    FC.addForeignPtrFinalizer ptr $ tryTakeMVar mv >>= maybe (return ()) id
+#else
+addFinalizerOnce :: ForeignPtr a -> IO () -> IO ()
+addFinalizerOnce = FC.addForeignPtrFinalizer
+#endif
+
 init :: IO Inotify
 init = do
     fd <- Fd <$> throwErrnoIfMinus1 "System.Linux.Inotify.init"
                    (c_inotify_init1 flags)
     buffer   <- mallocForeignPtrBytes bufferSize
+    addFinalizerOnce buffer (closeFdWith closeFd fd)
     startRef <- newIORef 0
     endRef   <- newIORef 0
     return $! Inotify{..}
@@ -230,7 +250,7 @@ readMessage start Inotify{..} = do
   return $! Event{..}
 
 close :: Inotify -> IO ()
-close Inotify{fd} = closeFdWith closeFd fd
+close Inotify{buffer} = finalizeForeignPtr buffer
 
 foreign import ccall unsafe "sys/inotify.h inotify_init1"
     c_inotify_init1 :: CInt -> IO CInt
