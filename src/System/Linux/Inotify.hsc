@@ -4,11 +4,14 @@
 
 module System.Linux.Inotify
      ( Inotify
+     , Event(..)
      , Watch(..)
      , EventMask(..)
      , Cookie
-     , Event(..)
      , init
+     , initWith
+     , InotifyOptions(..)
+     , defaultInotifyOptions
      , addWatch
      , addWatch_
      , rmWatch
@@ -60,12 +63,10 @@ import System.Posix.ByteString.FilePath (RawFilePath)
 data Inotify = Inotify
     { fd       :: {-# UNPACK #-} !Fd
     , buffer   :: {-# UNPACK #-} !(ForeignPtr CChar)
+    , bufSize  :: {-# UNPACK #-} !Int
     , startRef :: !(IORef Int)
     , endRef   :: !(IORef Int)
     } deriving (Eq)
-
-bufferSize :: Int
-bufferSize = 4096
 
 {-
 -- I'm tempted to define 'Watch' as
@@ -127,6 +128,9 @@ data Event = Event
    , mask   :: {-# UNPACK #-} !EventMask
    , cookie :: {-# UNPACK #-} !Cookie
    , name   :: {-# UNPACK #-} !B.ByteString
+      -- ^ The proper interpretation of this seems to be to use
+      -- 'GHC.IO.getForeignEncoding' and then unpack it to a String
+      -- or decode it using the text package.
    } deriving (Show)
 
 #if __GLASGOW_HASKELL__ < 706
@@ -145,13 +149,22 @@ addFinalizerOnce = FC.addForeignPtrFinalizer
 #endif
 
 -- | Creates an inotify socket descriptor that watches can be
--- added to and events can be read from.
+-- added to and events can be read from.   
 
 init :: IO Inotify
-init = do
-    fd <- Fd <$> throwErrnoIfMinus1 "System.Linux.Inotify.init"
+init = initWith defaultInotifyOptions
+
+newtype InotifyOptions = InotifyOptions { bufferSize :: Int }
+
+defaultInotifyOptions :: InotifyOptions
+defaultInotifyOptions = InotifyOptions { bufferSize = 2048 }
+
+initWith :: InotifyOptions -> IO Inotify
+initWith InotifyOptions{..} = do
+    fd <- Fd <$> throwErrnoIfMinus1 "System.Linux.Inotify.initWith"
                    (c_inotify_init1 flags)
-    buffer   <- mallocForeignPtrBytes bufferSize
+    let bufSize = bufferSize
+    buffer   <- mallocForeignPtrBytes bufSize
     addFinalizerOnce buffer (closeFdWith closeFd fd)
     startRef <- newIORef 0
     endRef   <- newIORef 0
@@ -248,7 +261,7 @@ getEvent inotify@Inotify{..} = do
     then do
       threadWaitRead fd
       let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufferSize)
+      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
       if numBytes == -1
       then do
         err <- getErrno
@@ -288,7 +301,7 @@ getEventNonBlocking inotify@Inotify{..} = do
     if start >= end
     then do
       let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufferSize)
+      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
       if numBytes == -1
       then do
         err <- getErrno
