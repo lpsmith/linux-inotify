@@ -135,10 +135,7 @@ data Event = Event
 
 #if __GLASGOW_HASKELL__ < 706
 -- | Workaround for bug in 'FC.newForeignPtr' before base 4.6.  Ensure the
--- finalizer is only run once, to prevent a segfault.  See GHC ticket #7170
---
--- Note that 'getvalue' and 'maybeBsFromForeignPtr' do not need this
--- workaround, since their finalizers are just 'touchForeignPtr' calls.
+-- finalizer is only run once.  See GHC ticket #7170
 addFinalizerOnce :: ForeignPtr a -> IO () -> IO ()
 addFinalizerOnce ptr fin = do
     mv <- newMVar fin
