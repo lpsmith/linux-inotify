@@ -31,6 +31,15 @@ module System.Linux.Inotify
      , in_MOVED_FROM
      , in_MOVED_TO
      , in_OPEN
+     , in_DONT_FOLLOW
+     , in_EXCL_UNLINK
+     , in_MASK_ADD
+     , in_ONESHOT
+     , in_ONLYDIR
+     , in_IGNORED
+     , in_ISDIR
+     , in_Q_OVERFLOW
+     , in_UNMOUNT
      ) where
 
 #include "unistd.h"
@@ -95,6 +104,7 @@ instance Monoid EventMask where
    mempty = EventMask 0
    mappend (EventMask a) (EventMask b) = EventMask (a .|. b)
 
+
 in_ACCESS :: EventMask
 in_ACCESS = EventMask (#const IN_ACCESS)
 in_ATTRIB :: EventMask
@@ -119,6 +129,24 @@ in_MOVED_TO :: EventMask
 in_MOVED_TO = EventMask (#const IN_MOVED_TO)
 in_OPEN :: EventMask
 in_OPEN = EventMask (#const IN_OPEN)
+in_DONT_FOLLOW :: EventMask
+in_DONT_FOLLOW = EventMask (#const IN_DONT_FOLLOW)
+in_EXCL_UNLINK :: EventMask
+in_EXCL_UNLINK = EventMask (#const IN_EXCL_UNLINK)
+in_MASK_ADD :: EventMask
+in_MASK_ADD = EventMask (#const IN_MASK_ADD)
+in_ONESHOT :: EventMask
+in_ONESHOT = EventMask (#const IN_ONESHOT)
+in_ONLYDIR :: EventMask
+in_ONLYDIR = EventMask (#const IN_ONLYDIR)
+in_IGNORED :: EventMask
+in_IGNORED = EventMask (#const IN_IGNORED)
+in_ISDIR :: EventMask
+in_ISDIR = EventMask (#const IN_ISDIR)
+in_Q_OVERFLOW :: EventMask
+in_Q_OVERFLOW = EventMask (#const IN_Q_OVERFLOW)
+in_UNMOUNT :: EventMask
+in_UNMOUNT = EventMask (#const IN_UNMOUNT)
 
 
 type Cookie = CUInt
