@@ -1,12 +1,18 @@
 {-# LANGUAGE ForeignFunctionInterface        #-}
 {-# LANGUAGE RecordWildCards, NamedFieldPuns #-}
 {-# LANGUAGE BangPatterns, DoAndIfThenElse   #-}
+{-# LANGUAGE EmptyDataDecls                  #-}
 
 module System.Linux.Inotify
      ( Inotify
      , Event(..)
      , Watch(..)
-     , EventMask(..)
+     , Mask(..)
+     , isect
+     , isSubset
+     , hasOverlap
+     , WatchFlag
+     , EventFlag
      , Cookie
      , init
      , initWith
@@ -98,62 +104,115 @@ rmWatch :: Watch -> IO ()
 
 newtype Watch = Watch CInt deriving (Eq, Ord, Show)
 
-newtype EventMask = EventMask CUInt deriving (Eq, Show)
+-- | Represents the mask,  which in inotify terminology is a union
+--   of flags that are used when setting up watches and receiving
+--   event notifications.
+--
+--   The type parameter is a phantom type that tracks whether
+--   a particular flag is used to set up a watch or when receiving
+--   an event.
 
-instance Monoid EventMask where
-   mempty = EventMask 0
-   mappend (EventMask a) (EventMask b) = EventMask (a .|. b)
+newtype Mask a = Mask CUInt deriving (Eq, Show)
+
+instance Monoid (Mask a) where
+   mempty = Mask 0
+   mappend (Mask a) (Mask b) = Mask (a .|. b)
+
+data EventFlag
+data WatchFlag
+
+isect :: Mask a -> Mask a -> Mask a
+isect (Mask a) (Mask b) = Mask (a .&. b)
+
+hasOverlap :: Mask a -> Mask a -> Bool
+hasOverlap a b = isect a b /= Mask 0
+
+isSubset :: Mask a -> Mask a -> Bool
+isSubset a b = isect a b == a
 
 
-in_ACCESS :: EventMask
-in_ACCESS = EventMask (#const IN_ACCESS)
-in_ATTRIB :: EventMask
-in_ATTRIB = EventMask (#const IN_ATTRIB)
-in_CLOSE_WRITE :: EventMask
-in_CLOSE_WRITE = EventMask (#const IN_CLOSE_WRITE)
-in_CLOSE_NOWRITE :: EventMask
-in_CLOSE_NOWRITE = EventMask (#const IN_CLOSE_NOWRITE)
-in_CREATE :: EventMask
-in_CREATE = EventMask (#const IN_CREATE)
-in_DELETE :: EventMask
-in_DELETE = EventMask (#const IN_DELETE)
-in_DELETE_SELF :: EventMask
-in_DELETE_SELF = EventMask (#const IN_DELETE_SELF)
-in_MODIFY :: EventMask
-in_MODIFY = EventMask (#const IN_MODIFY)
-in_MOVE_SELF :: EventMask
-in_MOVE_SELF = EventMask (#const IN_MOVE_SELF)
-in_MOVED_FROM :: EventMask
-in_MOVED_FROM = EventMask (#const IN_MOVED_FROM)
-in_MOVED_TO :: EventMask
-in_MOVED_TO = EventMask (#const IN_MOVED_TO)
-in_OPEN :: EventMask
-in_OPEN = EventMask (#const IN_OPEN)
-in_DONT_FOLLOW :: EventMask
-in_DONT_FOLLOW = EventMask (#const IN_DONT_FOLLOW)
-in_EXCL_UNLINK :: EventMask
-in_EXCL_UNLINK = EventMask (#const IN_EXCL_UNLINK)
-in_MASK_ADD :: EventMask
-in_MASK_ADD = EventMask (#const IN_MASK_ADD)
-in_ONESHOT :: EventMask
-in_ONESHOT = EventMask (#const IN_ONESHOT)
-in_ONLYDIR :: EventMask
-in_ONLYDIR = EventMask (#const IN_ONLYDIR)
-in_IGNORED :: EventMask
-in_IGNORED = EventMask (#const IN_IGNORED)
-in_ISDIR :: EventMask
-in_ISDIR = EventMask (#const IN_ISDIR)
-in_Q_OVERFLOW :: EventMask
-in_Q_OVERFLOW = EventMask (#const IN_Q_OVERFLOW)
-in_UNMOUNT :: EventMask
-in_UNMOUNT = EventMask (#const IN_UNMOUNT)
+-- | File was accessed.  Includes the files of a watched directory.
+in_ACCESS :: Mask a
+in_ACCESS = Mask (#const IN_ACCESS)
+
+-- | Metadata changed, e.g., permissions,  timestamps, extended  attributes,
+--   link  count  (since  Linux 2.6.25), UID, GID, etc.  Includes the files of
+--   a watched directory.
+in_ATTRIB :: Mask a
+in_ATTRIB = Mask (#const IN_ATTRIB)
+
+-- | File opened for writing was closed.   Includes the files of a watched
+--   directory.
+in_CLOSE_WRITE :: Mask a
+in_CLOSE_WRITE = Mask (#const IN_CLOSE_WRITE)
+
+-- | File not opened for writing was closed.  Includes the files of a watched
+--   directory.
+in_CLOSE_NOWRITE :: Mask a
+in_CLOSE_NOWRITE = Mask (#const IN_CLOSE_NOWRITE)
+
+-- | File/directory created in watched directory.
+in_CREATE :: Mask a
+in_CREATE = Mask (#const IN_CREATE)
+
+-- | File/directory  deleted  from  watched  directory.
+in_DELETE :: Mask a
+in_DELETE = Mask (#const IN_DELETE)
+
+-- | Watched file/directory was itself deleted.
+in_DELETE_SELF :: Mask a
+in_DELETE_SELF = Mask (#const IN_DELETE_SELF)
+
+-- | File was modified.  Includes the files of a watched
+--   directory.
+in_MODIFY :: Mask a
+in_MODIFY = Mask (#const IN_MODIFY)
+
+-- | Watched file/directory was itself moved.
+in_MOVE_SELF :: Mask a
+in_MOVE_SELF = Mask (#const IN_MOVE_SELF)
+
+-- | File moved out of watched directory. Includes the files of a watched
+--   directory.
+in_MOVED_FROM :: Mask a
+in_MOVED_FROM = Mask (#const IN_MOVED_FROM)
+
+-- | File moved into watched directory. Includes the files of a watched
+--   directory.
+in_MOVED_TO :: Mask a
+in_MOVED_TO = Mask (#const IN_MOVED_TO)
+
+-- | File was opened.  Includes the files of a watched
+--   directory.
+in_OPEN :: Mask a
+in_OPEN = Mask (#const IN_OPEN)
+
+-- | Don't  dereference  pathname  if it is a symbolic link.
+in_DONT_FOLLOW :: Mask WatchFlag
+in_DONT_FOLLOW = Mask (#const IN_DONT_FOLLOW)
+in_EXCL_UNLINK :: Mask WatchFlag
+in_EXCL_UNLINK = Mask (#const IN_EXCL_UNLINK)
+in_MASK_ADD :: Mask WatchFlag
+in_MASK_ADD = Mask (#const IN_MASK_ADD)
+in_ONESHOT :: Mask WatchFlag
+in_ONESHOT = Mask (#const IN_ONESHOT)
+in_ONLYDIR :: Mask WatchFlag
+in_ONLYDIR = Mask (#const IN_ONLYDIR)
+in_IGNORED :: Mask EventFlag
+in_IGNORED = Mask (#const IN_IGNORED)
+in_ISDIR :: Mask EventFlag
+in_ISDIR = Mask (#const IN_ISDIR)
+in_Q_OVERFLOW :: Mask EventFlag
+in_Q_OVERFLOW = Mask (#const IN_Q_OVERFLOW)
+in_UNMOUNT :: Mask EventFlag
+in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
 
 type Cookie = CUInt
 
 data Event = Event
    { wd     :: {-# UNPACK #-} !Watch
-   , mask   :: {-# UNPACK #-} !EventMask
+   , mask   :: {-# UNPACK #-} !(Mask EventFlag)
    , cookie :: {-# UNPACK #-} !Cookie
    , name   :: {-# UNPACK #-} !B.ByteString
       -- ^ The proper interpretation of this seems to be to use
@@ -174,7 +233,7 @@ addFinalizerOnce = FC.addForeignPtrFinalizer
 #endif
 
 -- | Creates an inotify socket descriptor that watches can be
--- added to and events can be read from.   
+-- added to and events can be read from.
 
 init :: IO Inotify
 init = initWith defaultInotifyOptions
@@ -199,7 +258,7 @@ initWith InotifyOptions{..} = do
 -- | Adds a watch on the inotify descriptor,  returns a watch descriptor.
 -- This function is thread safe.
 
-addWatch :: Inotify -> FilePath -> EventMask -> IO Watch
+addWatch :: Inotify -> FilePath -> Mask WatchFlag -> IO Watch
 addWatch Inotify{fd} path !mask =
     withCString path $ \cpath -> do
       Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch" path
@@ -210,7 +269,7 @@ addWatch Inotify{fd} path !mask =
 -- current implementation is that if 'addWatch_' throws an 'IOException',
 -- then any unicode paths will be mangled in the error message.
 
-addWatch_ :: Inotify -> RawFilePath -> EventMask -> IO Watch
+addWatch_ :: Inotify -> RawFilePath -> Mask WatchFlag -> IO Watch
 addWatch_ Inotify{fd} path !mask =
     B.useAsCString path $ \cpath -> do
       Watch <$> throwErrnoPathIfMinus1 "System.Linux.Inotify.addWatch_"
@@ -253,7 +312,8 @@ rmWatch Inotify{fd} !wd = do
 {--
 -- | Stops watching a path for changes.  This version throws an exception
 --   on @EINVAL@,  so it is not ok to delete a non-existant watch
---   descriptor.   Therefore this function is not thread safe.
+--   descriptor.   Therefore this function is not thread safe,  even
+--   if it's only ever called from a single thread.
 --
 --   The problem is that in some cases the kernel will automatically
 --   delete a watch descriptor.  Although the kernel generates an
@@ -265,7 +325,10 @@ rmWatch Inotify{fd} !wd = do
 --   It may not even be safe to call this function from the thread
 --   that is calling @getEvent@.  I need to investigate whether or
 --   not the kernel would delete the descriptor before the @IN_IGNORED@
---   message has been delivered to your application.
+--   message has been delivered to your application.  This would make
+--   rmWatch' safer in the presence of threads,  but the application
+--   would still have to ensure that all delivered events are processed
+--   before rmWatch' is called.
 
 rmWatch' :: Inotify -> Watch -> IO ()
 rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
@@ -303,7 +366,7 @@ readMessage :: Int -> Inotify -> IO Event
 readMessage start Inotify{..} = do
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
   wd     <- Watch     <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
-  mask   <- EventMask <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
+  mask   <- Mask <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
   cookie <-               ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
   len_   <-               ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
   let len = fromIntegral len_
@@ -372,7 +435,7 @@ foreign import ccall unsafe "sys/inotify.h inotify_init1"
     c_inotify_init1 :: CInt -> IO CInt
 
 foreign import ccall unsafe "sys/inotify.h inotify_add_watch"
-    c_inotify_add_watch :: Fd -> CString -> EventMask -> IO CInt
+    c_inotify_add_watch :: Fd -> CString -> Mask WatchFlag -> IO CInt
 
 foreign import ccall unsafe "sys/inotify.h inotify_rm_watch"
     c_inotify_rm_watch :: Fd -> Watch -> IO CInt
