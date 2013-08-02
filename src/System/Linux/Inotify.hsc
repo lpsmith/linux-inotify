@@ -24,6 +24,9 @@ module System.Linux.Inotify
      , getEvent
      , getEventNonBlocking
      , getEventFromBuffer
+     , peekEvent
+     , peekEventNonBlocking
+     , peekEventFromBuffer
      , close
      , in_ACCESS
      , in_ATTRIB
@@ -362,13 +365,44 @@ getEvent inotify@Inotify{..} = do
     else do
       readMessage start inotify
 
+-- | Returns an inotify event,  blocking until one is available.
+--
+--   If this returns an event, then the next read from the inotify
+--   descriptor will return the same event and this read will not
+--   result in a system call.
+--
+--   It is not safe to call this function from multiple threads at the same
+--   time.  Though this could be fixed,  I do not see why it would be useful.
+
+peekEvent :: Inotify -> IO Event
+peekEvent inotify@Inotify{..} = do
+    start <- readIORef startRef
+    end   <- readIORef endRef
+    if start >= end
+    then do
+      threadWaitRead fd
+      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
+      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
+      if numBytes == -1
+      then do
+        err <- getErrno
+        if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
+        then peekEvent inotify
+        else throwErrno "System.Linux.Inotify.peekEvent"
+      else do
+        writeIORef endRef (fromIntegral numBytes)
+        writeIORef startRef 0
+        peekMessage 0 inotify
+    else do
+      peekMessage start inotify
+
 readMessage :: Int -> Inotify -> IO Event
 readMessage start Inotify{..} = do
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
-  wd     <- Watch     <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
-  mask   <- Mask <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
-  cookie <-               ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
-  len_   <-               ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
+  mask   <- Mask  <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
+  cookie <-           ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
+  len_   <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
   let len = fromIntegral len_
   name <- if len == 0
             then return B.empty
@@ -376,6 +410,17 @@ readMessage start Inotify{..} = do
   writeIORef startRef $! (start + (#size struct inotify_event) + len)
   return $! Event{..}
 
+peekMessage :: Int -> Inotify -> IO Event
+peekMessage start Inotify{..} = do
+  let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
+  wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
+  mask   <- Mask  <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
+  cookie <-           ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
+  len    <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  name <- if len == 0
+            then return B.empty
+            else B.packCString ((#ptr struct inotify_event, name) ptr)
+  return $! Event{..}
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -404,6 +449,39 @@ getEventNonBlocking inotify@Inotify{..} = do
     else do
       Just <$> readMessage start inotify
 
+-- | Returns an inotify event only if one is immediately available.
+--
+--   If this returns an event, then the next read from the inotify
+--   descriptor will return the same event and this read will not
+--   result in a system call.
+--
+--   One possible downside of the current implementation is that
+--   returning 'Nothing' necessarily results in a system call.
+
+
+peekEventNonBlocking :: Inotify -> IO (Maybe Event)
+peekEventNonBlocking inotify@Inotify{..} = do
+    start <- readIORef startRef
+    end   <- readIORef endRef
+    if start >= end
+    then do
+      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
+      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
+      if numBytes == -1
+      then do
+        err <- getErrno
+        if err == eAGAIN || err == eWOULDBLOCK
+        then return Nothing
+        else if err == eINTR
+             then peekEventNonBlocking inotify
+             else throwErrno "System.Linux.Inotify.getEventNonBlocking"
+      else do
+        writeIORef endRef (fromIntegral numBytes)
+        writeIORef startRef 0
+        Just <$> peekMessage 0 inotify
+    else do
+      Just <$> peekMessage start inotify
+
 
 -- | Returns an inotify event only if one is available in 'Inotify's
 --   buffer.  This won't ever make a system call.
@@ -415,6 +493,21 @@ getEventFromBuffer inotify@Inotify{..} = do
     if start >= end
     then return Nothing
     else Just <$> readMessage start inotify
+
+
+-- | Returns an inotify event only if one is available in 'Inotify's
+--   buffer.  This won't ever make a system call.
+--
+--   If this returns an event,  then the next read from the descriptor
+--   will
+
+peekEventFromBuffer :: Inotify -> IO (Maybe Event)
+peekEventFromBuffer inotify@Inotify{..} = do
+    start <- readIORef startRef
+    end   <- readIORef endRef
+    if start >= end
+    then return Nothing
+    else Just <$> peekMessage start inotify
 
 
 -- | Closes an inotify descriptor,  freeing the resources associated
