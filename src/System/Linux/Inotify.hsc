@@ -361,7 +361,9 @@ getEvent inotify@Inotify{..} = do
         else throwErrno "System.Linux.Inotify.getEvent"
       else do
         writeIORef endRef (fromIntegral numBytes)
-        readMessage 0 inotify
+        (evt,start') <- readMessage 0 inotify
+        writeIORef startRef start'
+        return evt
     else do
       readMessage start inotify
 
@@ -391,12 +393,13 @@ peekEvent inotify@Inotify{..} = do
         else throwErrno "System.Linux.Inotify.peekEvent"
       else do
         writeIORef endRef (fromIntegral numBytes)
+        (evt,_) <- peekMessage 0 inotify
         writeIORef startRef 0
         peekMessage 0 inotify
     else do
       peekMessage start inotify
 
-readMessage :: Int -> Inotify -> IO Event
+readMessage :: Int -> Inotify -> IO (Event,Int)
 readMessage start Inotify{..} = do
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
   wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
@@ -407,20 +410,9 @@ readMessage start Inotify{..} = do
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
-  writeIORef startRef $! (start + (#size struct inotify_event) + len)
-  return $! Event{..}
-
-peekMessage :: Int -> Inotify -> IO Event
-peekMessage start Inotify{..} = do
-  let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
-  wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
-  mask   <- Mask  <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
-  cookie <-           ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
-  len    <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
-  name <- if len == 0
-            then return B.empty
-            else B.packCString ((#ptr struct inotify_event, name) ptr)
-  return $! Event{..}
+  let !evt = Event{..}
+      !start' = start + (#size struct inotify_event) + len
+  return $! (evt,start')
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -445,9 +437,13 @@ getEventNonBlocking inotify@Inotify{..} = do
              else throwErrno "System.Linux.Inotify.getEventNonBlocking"
       else do
         writeIORef endRef (fromIntegral numBytes)
-        Just <$> readMessage 0 inotify
+        (evt, start') <- readMessage 0 inotify
+        writeIORef startRef start'
+        return $! Just evt
     else do
-      Just <$> readMessage start inotify
+      (evt, start') <- readMessage start inotify
+      writeIORef startRef start'
+      return $! Just evt
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -477,11 +473,12 @@ peekEventNonBlocking inotify@Inotify{..} = do
              else throwErrno "System.Linux.Inotify.getEventNonBlocking"
       else do
         writeIORef endRef (fromIntegral numBytes)
+        (evt, _) <- readMessage 0 inotify
         writeIORef startRef 0
-        Just <$> peekMessage 0 inotify
+        return $! Just evt
     else do
-      Just <$> peekMessage start inotify
-
+      (evt, _) <- readMessage start inotify
+      return $! Just evt
 
 -- | Returns an inotify event only if one is available in 'Inotify's
 --   buffer.  This won't ever make a system call.
@@ -492,7 +489,10 @@ getEventFromBuffer inotify@Inotify{..} = do
     end   <- readIORef endRef
     if start >= end
     then return Nothing
-    else Just <$> readMessage start inotify
+    else do
+      (evt, start') <- readMessage start inotify
+      writeIORef startRef start'
+      return $! Just evt
 
 
 -- | Returns an inotify event only if one is available in 'Inotify's
@@ -507,8 +507,9 @@ peekEventFromBuffer inotify@Inotify{..} = do
     end   <- readIORef endRef
     if start >= end
     then return Nothing
-    else Just <$> peekMessage start inotify
-
+    else do
+      (evt, _) <- readMessage start inotify
+      return $! Just evt
 
 -- | Closes an inotify descriptor,  freeing the resources associated
 -- with it.  This will also raise an 'IOException' in any threads that
