@@ -309,7 +309,7 @@ rmWatch Inotify{fd} !wd = do
     when (res == -1) $ do
       err <- getErrno
       if err == eINVAL
-      then resetErrno
+      then return ()
       else throwErrno "System.Linux.Inotify.rmWatch"
 
 {--
@@ -346,26 +346,10 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 
 getEvent :: Inotify -> IO Event
 getEvent inotify@Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    if start >= end
-    then do
-      threadWaitRead fd
-      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
-      if numBytes == -1
-      then do
-        err <- getErrno
-        if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
-        then getEvent inotify
-        else throwErrno "System.Linux.Inotify.getEvent"
-      else do
-        writeIORef endRef (fromIntegral numBytes)
-        (evt,start') <- readMessage 0 inotify
-        writeIORef startRef start'
-        return evt
-    else do
-      readMessage start inotify
+    fillBufferBlocking inotify "System.Linux.Inotify.getEvent"
+    evt <- peekMessage inotify
+    consumeMessage inotify
+    return evt
 
 -- | Returns an inotify event,  blocking until one is available.
 --
@@ -378,41 +362,76 @@ getEvent inotify@Inotify{..} = do
 
 peekEvent :: Inotify -> IO Event
 peekEvent inotify@Inotify{..} = do
+    fillBufferBlocking inotify "System.Linux.Inotify.peekEvent"
+    peekMessage inotify
+
+hasEmptyBuffer :: Inotify -> IO Bool
+hasEmptyBuffer Inotify{..} = do
     start <- readIORef startRef
     end   <- readIORef endRef
-    if start >= end
-    then do
-      threadWaitRead fd
-      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
-      if numBytes == -1
-      then do
-        err <- getErrno
-        if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
-        then peekEvent inotify
-        else throwErrno "System.Linux.Inotify.peekEvent"
-      else do
-        writeIORef endRef (fromIntegral numBytes)
-        (evt,_) <- peekMessage 0 inotify
-        writeIORef startRef 0
-        peekMessage 0 inotify
-    else do
-      peekMessage start inotify
+    return $! (start >= end)
+{-# INLINE hasEmptyBuffer #-}
 
-readMessage :: Int -> Inotify -> IO (Event,Int)
-readMessage start Inotify{..} = do
+fillBuffer :: Inotify -> a -> (Errno -> IO a) -> IO a
+fillBuffer Inotify{..} val errorHandler = do
+    let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
+    numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
+    if numBytes == -1
+    then getErrno >>= errorHandler
+    else do
+        writeIORef startRef 0
+        writeIORef endRef (fromIntegral numBytes)
+        return val
+{-# INLINE fillBuffer #-}
+
+fillBufferBlocking :: Inotify -> String -> IO ()
+fillBufferBlocking inotify@Inotify{..} funcName = do
+    isEmpty <- hasEmptyBuffer inotify
+    when isEmpty loop
+  where
+    loop = do
+      threadWaitRead fd
+      fillBuffer inotify () $ \err -> do
+          if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
+          then loop
+          else throwErrno funcName
+
+fillBufferNonBlocking :: Inotify -> String -> IO Bool
+fillBufferNonBlocking inotify@Inotify{..} funcName = do
+    isEmpty <- hasEmptyBuffer inotify
+    if isEmpty
+    then loop
+    else return False
+  where
+    loop = do
+      fillBuffer inotify False $ \err -> do
+          if err == eAGAIN || err == eWOULDBLOCK
+          then return True
+          else if err == eINTR
+               then loop
+               else throwErrno funcName
+
+peekMessage :: Inotify -> IO Event
+peekMessage Inotify{..} = do
+  start  <- readIORef startRef
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
   wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
   mask   <- Mask  <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
   cookie <-           ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
-  len_   <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
-  let len = fromIntegral len_
+  len    <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
-  let !evt = Event{..}
-      !start' = start + (#size struct inotify_event) + len
-  return $! (evt,start')
+  return $! Event{..}
+{-# INLINE peekMessage #-}
+
+consumeMessage :: Inotify -> IO ()
+consumeMessage Inotify{..} = do
+  start <- readIORef startRef
+  let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
+  len   <- ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  writeIORef endRef $! start + (#size struct inotify_event) + fromIntegral len
+{-# INLINE consumeMessage #-}
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -421,29 +440,15 @@ readMessage start Inotify{..} = do
 
 getEventNonBlocking :: Inotify -> IO (Maybe Event)
 getEventNonBlocking inotify@Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    if start >= end
-    then do
-      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
-      if numBytes == -1
-      then do
-        err <- getErrno
-        if err == eAGAIN || err == eWOULDBLOCK
-        then return Nothing
-        else if err == eINTR
-             then getEventNonBlocking inotify
-             else throwErrno "System.Linux.Inotify.getEventNonBlocking"
-      else do
-        writeIORef endRef (fromIntegral numBytes)
-        (evt, start') <- readMessage 0 inotify
-        writeIORef startRef start'
-        return $! Just evt
+    isEmpty <- fillBufferNonBlocking inotify funcName
+    if isEmpty
+    then return Nothing
     else do
-      (evt, start') <- readMessage start inotify
-      writeIORef startRef start'
+      evt <- peekMessage inotify
+      consumeMessage inotify
       return $! Just evt
+  where
+    funcName = "System.Linux.Inotify.getEventNonBlocking"
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -454,46 +459,29 @@ getEventNonBlocking inotify@Inotify{..} = do
 --   One possible downside of the current implementation is that
 --   returning 'Nothing' necessarily results in a system call.
 
-
 peekEventNonBlocking :: Inotify -> IO (Maybe Event)
 peekEventNonBlocking inotify@Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    if start >= end
-    then do
-      let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-      numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
-      if numBytes == -1
-      then do
-        err <- getErrno
-        if err == eAGAIN || err == eWOULDBLOCK
-        then return Nothing
-        else if err == eINTR
-             then peekEventNonBlocking inotify
-             else throwErrno "System.Linux.Inotify.getEventNonBlocking"
-      else do
-        writeIORef endRef (fromIntegral numBytes)
-        (evt, _) <- readMessage 0 inotify
-        writeIORef startRef 0
-        return $! Just evt
+    isEmpty <- fillBufferNonBlocking inotify funcName
+    if isEmpty
+    then return Nothing
     else do
-      (evt, _) <- readMessage start inotify
+      evt <- peekMessage inotify
       return $! Just evt
+  where
+    funcName = "System.Linux.Inotify.peekEventNonBlocking"
 
 -- | Returns an inotify event only if one is available in 'Inotify's
 --   buffer.  This won't ever make a system call.
 
 getEventFromBuffer :: Inotify -> IO (Maybe Event)
-getEventFromBuffer inotify@Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    if start >= end
+getEventFromBuffer inotify = do
+    isEmpty <- hasEmptyBuffer inotify
+    if isEmpty
     then return Nothing
     else do
-      (evt, start') <- readMessage start inotify
-      writeIORef startRef start'
-      return $! Just evt
-
+       evt <- peekMessage inotify
+       consumeMessage inotify
+       return $! Just evt
 
 -- | Returns an inotify event only if one is available in 'Inotify's
 --   buffer.  This won't ever make a system call.
@@ -503,13 +491,12 @@ getEventFromBuffer inotify@Inotify{..} = do
 
 peekEventFromBuffer :: Inotify -> IO (Maybe Event)
 peekEventFromBuffer inotify@Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    if start >= end
+    isEmpty <- hasEmptyBuffer inotify
+    if isEmpty
     then return Nothing
     else do
-      (evt, _) <- readMessage start inotify
-      return $! Just evt
+       evt <- peekMessage inotify
+       return $! Just evt
 
 -- | Closes an inotify descriptor,  freeing the resources associated
 -- with it.  This will also raise an 'IOException' in any threads that
