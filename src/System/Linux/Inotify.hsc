@@ -14,7 +14,7 @@ module System.Linux.Inotify
      , hasOverlap
      , WatchFlag
      , EventFlag
-     , Cookie
+     , Cookie(..)
      , init
      , initWith
      , InotifyOptions(..)
@@ -274,7 +274,7 @@ in_UNMOUNT :: Mask EventFlag
 in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
 
-type Cookie = CUInt
+newtype Cookie = Cookie CUInt deriving (Eq, Ord, Show, Typeable)
 
 data Event = Event
    { wd     :: {-# UNPACK #-} !Watch
@@ -479,10 +479,10 @@ peekMessage :: Inotify -> IO Event
 peekMessage Inotify{..} = do
   start  <- readIORef startRef
   let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
-  wd     <- Watch <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
-  mask   <- Mask  <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
-  cookie <-           ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
-  len    <-           ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
+  mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
+  cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
+  len    <-            ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
