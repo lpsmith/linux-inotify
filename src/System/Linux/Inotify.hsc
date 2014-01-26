@@ -30,6 +30,7 @@ module System.Linux.Inotify
      , close
      , in_ACCESS
      , in_ATTRIB
+     , in_CLOSE
      , in_CLOSE_WRITE
      , in_CLOSE_NOWRITE
      , in_CREATE
@@ -37,9 +38,11 @@ module System.Linux.Inotify
      , in_DELETE_SELF
      , in_MODIFY
      , in_MOVE_SELF
+     , in_MOVE
      , in_MOVED_FROM
      , in_MOVED_TO
      , in_OPEN
+     , in_ALL_EVENTS
      , in_DONT_FOLLOW
      , in_EXCL_UNLINK
      , in_MASK_ADD
@@ -112,16 +115,23 @@ newtype Watch = Watch CInt deriving (Eq, Ord, Show)
 --   event notifications.
 --
 --   The type parameter is a phantom type that tracks whether
---   a particular flag is used to set up a watch or when receiving
---   an event.
+--   a particular flag is used to set up a watch ('WatchFlag') or
+--   when receiving an event. ('EventFlag')   Polymorphic
+--   parameters mean that the flag may appear in either context.
 
 newtype Mask a = Mask CUInt deriving (Eq, Show)
 
+-- | Computes the union of two 'Mask's.
 instance Monoid (Mask a) where
    mempty = Mask 0
    mappend (Mask a) (Mask b) = Mask (a .|. b)
 
+-- | An empty type used to denote 'Mask' values that can be received
+--   from the kernel in an inotify event message.
 data EventFlag
+
+-- | An empty type used to denote 'Mask' values that can be sent to
+--   the kernel when setting up an inotify watch.
 data WatchFlag
 
 isect :: Mask a -> Mask a -> Mask a
@@ -143,6 +153,11 @@ in_ACCESS = Mask (#const IN_ACCESS)
 --   a watched directory.
 in_ATTRIB :: Mask a
 in_ATTRIB = Mask (#const IN_ATTRIB)
+
+-- | File was closed.  This is not a separate flag, but a convenience definition
+--   such that  'in_CLOSE' '==' 'in_CLOSE_WRITE' '<>' 'in_CLOSE_NOWRITE'
+in_CLOSE :: Mask a
+in_CLOSE = Mask (#const IN_CLOSE)
 
 -- | File opened for writing was closed.   Includes the files of a watched
 --   directory.
@@ -175,6 +190,11 @@ in_MODIFY = Mask (#const IN_MODIFY)
 in_MOVE_SELF :: Mask a
 in_MOVE_SELF = Mask (#const IN_MOVE_SELF)
 
+-- | File was moved.  This is not a separate flag, but a convenience definition
+--   such that  'in_MOVE' '==' 'in_MOVED_FROM' '<>' 'in_MOVED_TO'.
+in_MOVE :: Mask a
+in_MOVE = Mask (#const IN_MOVE)
+
 -- | File moved out of watched directory. Includes the files of a watched
 --   directory.
 in_MOVED_FROM :: Mask a
@@ -190,23 +210,57 @@ in_MOVED_TO = Mask (#const IN_MOVED_TO)
 in_OPEN :: Mask a
 in_OPEN = Mask (#const IN_OPEN)
 
--- | Don't  dereference  pathname  if it is a symbolic link.
+-- | A union of all flags above;  this is not a separate flag but a convenience
+--   definition.
+in_ALL_EVENTS :: Mask a
+in_ALL_EVENTS = Mask (#const IN_OPEN)
+
+-- | (since Linux 2.6.15) Don't  dereference  pathname  if it is a symbolic link.
 in_DONT_FOLLOW :: Mask WatchFlag
 in_DONT_FOLLOW = Mask (#const IN_DONT_FOLLOW)
+
+-- | (since Linux 2.6.36)
+--      By default, when watching events on the  children
+--      of a directory, events are generated for children
+--      even after  they  have  been  unlinked  from  the
+--      directory.   This  can result in large numbers of
+--      uninteresting events for some applications (e.g.,
+--      if watching /tmp, in which many applications create
+--      temporary files whose names  are  immediately
+--      unlinked).  Specifying IN_EXCL_UNLINK changes the
+--      default behavior, so that events are  not  generated
+--      for  children after they have been unlinked
+--      from the watched directory.
 in_EXCL_UNLINK :: Mask WatchFlag
 in_EXCL_UNLINK = Mask (#const IN_EXCL_UNLINK)
+
+-- | Add (OR) events to watch mask for  this  pathname
+--   if it already exists (instead of replacing mask).
 in_MASK_ADD :: Mask WatchFlag
 in_MASK_ADD = Mask (#const IN_MASK_ADD)
+
+-- | Monitor pathname for one event, then remove from watch list.
 in_ONESHOT :: Mask WatchFlag
 in_ONESHOT = Mask (#const IN_ONESHOT)
+
+-- | (since Linux 2.6.15) Only watch pathname if it is a directory.
 in_ONLYDIR :: Mask WatchFlag
 in_ONLYDIR = Mask (#const IN_ONLYDIR)
+
+-- | Watch was removed explicitly ('rmWatch') or automatically
+--   (file was deleted, or file system was unmounted).
 in_IGNORED :: Mask EventFlag
 in_IGNORED = Mask (#const IN_IGNORED)
+
+-- | Subject of this event is a directory.
 in_ISDIR :: Mask EventFlag
 in_ISDIR = Mask (#const IN_ISDIR)
+
+-- | Event queue overflowed (wd is -1 for this event).
 in_Q_OVERFLOW :: Mask EventFlag
 in_Q_OVERFLOW = Mask (#const IN_Q_OVERFLOW)
+
+-- | File system containing watched object was unmounted.
 in_UNMOUNT :: Mask EventFlag
 in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
@@ -321,17 +375,18 @@ rmWatch Inotify{fd} !wd = do
 --   The problem is that in some cases the kernel will automatically
 --   delete a watch descriptor.  Although the kernel generates an
 --   @IN_IGNORED@ event whenever a descriptor is deleted,  it's
---   possible that multi-threaded use would delete the descriptor after
---   the kernel has deleted it but before your application has acted
---   on the message.
+--   possible that using @rmWatch'@ and @getEvent@ in different threads
+--   would delete the descriptor after the kernel has delivered the
+--   @IN_IGNORED@ event but before your application has acted on the
+--   message.
 --
 --   It may not even be safe to call this function from the thread
 --   that is calling @getEvent@.  I need to investigate whether or
---   not the kernel would delete the descriptor before the @IN_IGNORED@
---   message has been delivered to your application.  This would make
---   rmWatch' safer in the presence of threads,  but the application
---   would still have to ensure that all delivered events are processed
---   before rmWatch' is called.
+--   not the kernel would return @EINVAL@ on a descriptor before
+--   the @IN_IGNORED@ message has been delivered to your application.
+--   This would make rmWatch' somewhat safer in the presence of threads,
+--   but the application would still have to ensure that all delivered
+--   events are processed before rmWatch' is called.
 
 rmWatch' :: Inotify -> Watch -> IO ()
 rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
@@ -354,7 +409,7 @@ getEvent inotify@Inotify{..} = do
 -- | Returns an inotify event,  blocking until one is available.
 --
 --   If this returns an event, then the next read from the inotify
---   descriptor will return the same event and this read will not
+--   descriptor will return the same event and the second read will not
 --   result in a system call.
 --
 --   It is not safe to call this function from multiple threads at the same
@@ -453,8 +508,8 @@ getEventNonBlocking inotify@Inotify{..} = do
 -- | Returns an inotify event only if one is immediately available.
 --
 --   If this returns an event, then the next read from the inotify
---   descriptor will return the same event and this read will not
---   result in a system call.
+--   descriptor will return the same event and the second read will
+--   not result in a system call.
 --
 --   One possible downside of the current implementation is that
 --   returning 'Nothing' necessarily results in a system call.
@@ -486,8 +541,9 @@ getEventFromBuffer inotify = do
 -- | Returns an inotify event only if one is available in 'Inotify's
 --   buffer.  This won't ever make a system call.
 --
---   If this returns an event,  then the next read from the descriptor
---   will
+--   If this returns an event, then the next read from the inotify
+--   descriptor will return the same event and the second read will not
+--   result in a system call.
 
 peekEventFromBuffer :: Inotify -> IO (Maybe Event)
 peekEventFromBuffer inotify@Inotify{..} = do
@@ -504,7 +560,8 @@ peekEventFromBuffer inotify@Inotify{..} = do
 --
 -- Although using a descriptor after it is closed is likely to raise
 -- an exception,  it is not safe to use the descriptor after it is closed.
--- However,  it is safe to call 'close' multiple times.
+-- However,  it is safe to call 'close' multiple times;  this binding
+-- ensures that only one system call will be made.
 --
 -- Descriptors will be closed after they are garbage collected, via
 -- a finalizer,  although it is often preferable to call 'close' yourself.
