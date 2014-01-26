@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards, NamedFieldPuns #-}
 {-# LANGUAGE BangPatterns, DoAndIfThenElse   #-}
 {-# LANGUAGE EmptyDataDecls                  #-}
+{-# LANGUAGE DeriveDataTypeable              #-}
 
 module System.Linux.Inotify
      ( Inotify
@@ -63,6 +64,8 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
 import Control.Applicative
 import Data.Monoid
+import Data.Typeable
+import Data.Function ( on )
 import Control.Concurrent ( threadWaitRead )
 import GHC.Conc ( closeFdWith )
 #if __GLASGOW_HASKELL__ < 706
@@ -87,7 +90,13 @@ data Inotify = Inotify
     , bufSize  :: {-# UNPACK #-} !Int
     , startRef :: !(IORef Int)
     , endRef   :: !(IORef Int)
-    } deriving (Eq)
+    } deriving (Eq, Typeable)
+
+instance Show Inotify where
+    show Inotify{fd} = "Inotify { fd = " ++ show fd ++ " }"
+
+instance Ord  Inotify where
+    compare = compare `on` fd
 
 {-
 -- I'm tempted to define 'Watch' as
@@ -108,7 +117,7 @@ rmWatch :: Watch -> IO ()
 -- somewhat.
 -}
 
-newtype Watch = Watch CInt deriving (Eq, Ord, Show)
+newtype Watch = Watch CInt deriving (Eq, Ord, Show, Typeable)
 
 -- | Represents the mask,  which in inotify terminology is a union
 --   of flags that are used when setting up watches and receiving
@@ -119,7 +128,7 @@ newtype Watch = Watch CInt deriving (Eq, Ord, Show)
 --   when receiving an event. ('EventFlag')   Polymorphic
 --   parameters mean that the flag may appear in either context.
 
-newtype Mask a = Mask CUInt deriving (Eq, Show)
+newtype Mask a = Mask CUInt deriving (Eq, Show, Typeable)
 
 -- | Computes the union of two 'Mask's.
 instance Monoid (Mask a) where
@@ -275,7 +284,7 @@ data Event = Event
       -- ^ The proper interpretation of this seems to be to use
       -- 'GHC.IO.getForeignEncoding' and then unpack it to a String
       -- or decode it using the text package.
-   } deriving (Show)
+   } deriving (Eq, Show, Typeable)
 
 #if __GLASGOW_HASKELL__ < 706
 -- | Workaround for bug in 'FC.newForeignPtr' before base 4.6.  Ensure the
