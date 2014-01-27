@@ -3,11 +3,25 @@
 {-# LANGUAGE BangPatterns, DoAndIfThenElse   #-}
 {-# LANGUAGE EmptyDataDecls                  #-}
 {-# LANGUAGE DeriveDataTypeable              #-}
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  System.Linux.Inotify
+-- Copyright   :  (c) 2013-2014 Leon P Smith
+-- License     :  BSD3
+--
+-- Maintainer  :  leon@melding-monads.com
+--
+-- Note that you will probably find inotify's manual page useful in
+-- conjunction with this documentation:
+--
+-- <http://man7.org/linux/man-pages/man7/inotify.7.html>
+--
+-----------------------------------------------------------------------------
 
 module System.Linux.Inotify
      ( Inotify
-     , Event(..)
      , Watch(..)
+     , Event(..)
      , Mask(..)
      , isect
      , isSubset
@@ -16,6 +30,7 @@ module System.Linux.Inotify
      , EventFlag
      , Cookie(..)
      , init
+     , close
      , initWith
      , InotifyOptions(..)
      , defaultInotifyOptions
@@ -28,7 +43,6 @@ module System.Linux.Inotify
      , peekEvent
      , peekEventNonBlocking
      , peekEventFromBuffer
-     , close
      , in_ACCESS
      , in_ATTRIB
      , in_CLOSE
@@ -79,6 +93,11 @@ import Foreign.C
 import qualified Foreign.Concurrent as FC
 import System.Posix.ByteString.FilePath (RawFilePath)
 
+-- | 'Inotify' represents an inotify descriptor,  to which watches can be added
+--   and events can be read from.   Internally, it also includes a buffer
+--   of events that have been delivered to the application from the kernel
+--   but haven't been processed.
+
 data Inotify = Inotify
     { fd       :: {-# UNPACK #-} !Fd
     , buffer   :: {-# UNPACK #-} !(ForeignPtr CChar)
@@ -112,11 +131,15 @@ rmWatch :: Watch -> IO ()
 -- somewhat.
 -}
 
+-- | 'Watch' represents a watch descriptor,  which is used to identify
+--   events and to cancel the watch.  Every watch descriptor is associated
+--   with a particular inotify descriptor and can only be
+--   used with that descriptor;  incorrect behavior will otherwise result.
+
 newtype Watch = Watch CInt deriving (Eq, Ord, Show, Typeable)
 
 -- | Represents the mask,  which in inotify terminology is a union
---   of flags that are used when setting up watches and receiving
---   event notifications.
+--   of bit flags representing various event types and watch options.
 --
 --   The type parameter is a phantom type that tracks whether
 --   a particular flag is used to set up a watch ('WatchFlag') or
@@ -138,15 +161,17 @@ data EventFlag
 --   the kernel when setting up an inotify watch.
 data WatchFlag
 
+-- | Compute the intersection (bitwise and) of two masks
 isect :: Mask a -> Mask a -> Mask a
 isect (Mask a) (Mask b) = Mask (a .&. b)
 
+-- | Do the two masks have any bits in common?
 hasOverlap :: Mask a -> Mask a -> Bool
 hasOverlap a b = isect a b /= Mask 0
 
+-- | Are the bits of the first mask a subset of the bits of the second?
 isSubset :: Mask a -> Mask a -> Bool
 isSubset a b = isect a b == a
-
 
 -- | File was accessed.  Includes the files of a watched directory.
 in_ACCESS :: Mask a
@@ -294,15 +319,26 @@ addFinalizerOnce = FC.addForeignPtrFinalizer
 #endif
 
 -- | Creates an inotify socket descriptor that watches can be
--- added to and events can be read from.
+--   added to and events can be read from.
 
 init :: IO Inotify
 init = initWith defaultInotifyOptions
 
-newtype InotifyOptions = InotifyOptions { bufferSize :: Int }
+-- | Additional configuration options for creating an Inotify descriptor.
+
+newtype InotifyOptions = InotifyOptions {
+      bufferSize :: Int -- ^ The size of the buffer used to receive events from
+                        --   the kernel.   This is an artifact of this binding,
+                        --   not inotify itself.
+    }
+
+-- | Default configuration options
 
 defaultInotifyOptions :: InotifyOptions
 defaultInotifyOptions = InotifyOptions { bufferSize = 2048 }
+
+-- | Creates an inotify socket descriptor with custom configuration options.
+--   Calls @inotify_init1(IN_NONBLOCK | IN_CLOEXEC)@.
 
 initWith :: InotifyOptions -> IO Inotify
 initWith InotifyOptions{..} = do
@@ -317,7 +353,7 @@ initWith InotifyOptions{..} = do
   where flags = (#const IN_NONBLOCK) .|. (#const IN_CLOEXEC)
 
 -- | Adds a watch on the inotify descriptor,  returns a watch descriptor.
--- This function is thread safe.
+--   This function is thread safe.
 
 addWatch :: Inotify -> FilePath -> Mask WatchFlag -> IO Watch
 addWatch Inotify{fd} path !mask =
