@@ -526,7 +526,7 @@ consumeMessage Inotify{..} = do
   len   <- withForeignPtr buffer $ \ptr0 -> do
                let ptr = ptr0 `plusPtr` start
                (#peek struct inotify_event, len   ) ptr :: IO CUInt
-  writeIORef endRef $! start + (#size struct inotify_event) + fromIntegral len
+  writeIORef startRef $! start + (#size struct inotify_event) + fromIntegral len
 {-# INLINE consumeMessage #-}
 
 -- | Returns an inotify event only if one is immediately available.
