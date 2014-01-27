@@ -74,12 +74,7 @@ import Control.Concurrent.MVar
 import Control.Monad
 import System.Posix
 import Data.IORef
-#if __GLASGOW_HASKELL__ >= 702
 import Foreign
-import qualified Foreign.ForeignPtr.Unsafe as Unsafe
-#else
-import Foreign as Unsafe
-#endif
 import Foreign.C
 import qualified Foreign.Concurrent as FC
 import System.Posix.ByteString.FilePath (RawFilePath)
@@ -88,8 +83,8 @@ data Inotify = Inotify
     { fd       :: {-# UNPACK #-} !Fd
     , buffer   :: {-# UNPACK #-} !(ForeignPtr CChar)
     , bufSize  :: {-# UNPACK #-} !Int
-    , startRef :: !(IORef Int)
-    , endRef   :: !(IORef Int)
+    , startRef :: {-# UNPACK #-} !(IORef Int)
+    , endRef   :: {-# UNPACK #-} !(IORef Int)
     } deriving (Eq, Typeable)
 
 instance Show Inotify where
@@ -438,8 +433,8 @@ hasEmptyBuffer Inotify{..} = do
 
 fillBuffer :: Inotify -> a -> (Errno -> IO a) -> IO a
 fillBuffer Inotify{..} val errorHandler = do
-    let !ptr = Unsafe.unsafeForeignPtrToPtr buffer
-    numBytes <- c_unsafe_read fd ptr (fromIntegral bufSize)
+    numBytes <- withForeignPtr buffer $ \ptr -> do
+                    c_unsafe_read fd ptr (fromIntegral bufSize)
     if numBytes == -1
     then getErrno >>= errorHandler
     else do
@@ -476,9 +471,9 @@ fillBufferNonBlocking inotify@Inotify{..} funcName = do
                else throwErrno funcName
 
 peekMessage :: Inotify -> IO Event
-peekMessage Inotify{..} = do
+peekMessage Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
   start  <- readIORef startRef
-  let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
+  let ptr = ptr0 `plusPtr` start
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
   mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
   cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
@@ -492,8 +487,9 @@ peekMessage Inotify{..} = do
 consumeMessage :: Inotify -> IO ()
 consumeMessage Inotify{..} = do
   start <- readIORef startRef
-  let ptr = Unsafe.unsafeForeignPtrToPtr buffer `plusPtr` start
-  len   <- ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  len   <- withForeignPtr buffer $ \ptr0 -> do
+               let ptr = ptr0 `plusPtr` start
+               (#peek struct inotify_event, len   ) ptr :: IO CUInt
   writeIORef endRef $! start + (#size struct inotify_event) + fromIntegral len
 {-# INLINE consumeMessage #-}
 
