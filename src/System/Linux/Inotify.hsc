@@ -11,8 +11,9 @@
 --
 -- Maintainer  :  leon@melding-monads.com
 --
--- Note that you will probably find inotify's manual page useful in
--- conjunction with this documentation:
+-- Although this module copies portions of the inotify manual page,  it may
+-- be useful to consult inotify's manual page useful in conjunction with this
+-- documentation:
 --
 -- <http://man7.org/linux/man-pages/man7/inotify.7.html>
 --
@@ -293,17 +294,32 @@ in_Q_OVERFLOW = Mask (#const IN_Q_OVERFLOW)
 in_UNMOUNT :: Mask EventFlag
 in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
+-- | A newtype wrapper for the 'cookie' field of the 'Event'.
 
 newtype Cookie = Cookie CUInt deriving (Eq, Ord, Show, Typeable)
 
 data Event = Event
    { wd     :: {-# UNPACK #-} !Watch
+     -- ^ Identifies the watch for which this event occurs.  It is one of  the
+     --   watch descriptors returned by a previous call to 'addWatch' or
+     --   'addWatch_'.
    , mask   :: {-# UNPACK #-} !(Mask EventFlag)
+     -- ^ contains bits that describe the event that occurred
    , cookie :: {-# UNPACK #-} !Cookie
+     -- ^ A unique integer that connects related events.  Currently this is
+     --   only used for rename events, and allows the resulting pair of
+     --   'in_MOVE_FROM' and 'in_MOVE_TO' events to be connected by the
+     --   application.
    , name   :: {-# UNPACK #-} !B.ByteString
-      -- ^ The proper interpretation of this seems to be to use
-      -- 'GHC.IO.getForeignEncoding' and then unpack it to a String
-      -- or decode it using the text package.
+     -- ^ The name field is only present when an event is returned for a file
+     --   inside a watched directory; it identifies the file pathname relative
+     --   to the watched directory.  This pathname is null-terminated, and may
+     --   include further null bytes to align subsequent reads to a suitable
+     --   address boundary.
+     --
+     --   The proper interpretation of this seems to be to use
+     --   'GHC.IO.getForeignEncoding' and then unpack it to a 'String'
+     --   or decode it using the text package.
    } deriving (Eq, Show, Typeable)
 
 #if __GLASGOW_HASKELL__ < 706
@@ -448,8 +464,8 @@ getEvent inotify@Inotify{..} = do
 
 -- | Returns an inotify event,  blocking until one is available.
 --
---   If this returns an event, then the next read from the inotify
---   descriptor will return the same event and the second read will not
+--   After this returns an event, the next read from the inotify
+--   descriptor will return the same event.  This read will not
 --   result in a system call.
 --
 --   It is not safe to call this function from multiple threads at the same
@@ -549,7 +565,7 @@ getEventNonBlocking inotify@Inotify{..} = do
 -- | Returns an inotify event only if one is immediately available.
 --
 --   If this returns an event, then the next read from the inotify
---   descriptor will return the same event and the second read will
+--   descriptor will return the same event, and this read will
 --   not result in a system call.
 --
 --   One possible downside of the current implementation is that
@@ -583,7 +599,7 @@ getEventFromBuffer inotify = do
 --   buffer.  This won't ever make a system call.
 --
 --   If this returns an event, then the next read from the inotify
---   descriptor will return the same event and the second read will not
+--   descriptor will return the same event,  and this read will not
 --   result in a system call.
 
 peekEventFromBuffer :: Inotify -> IO (Maybe Event)
