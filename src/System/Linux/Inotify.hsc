@@ -81,6 +81,7 @@ import Control.Applicative
 import Data.Monoid
 import Data.Typeable
 import Data.Function ( on )
+import Data.Word
 import Control.Concurrent ( threadWaitRead )
 import GHC.Conc ( closeFdWith )
 #if __GLASGOW_HASKELL__ < 706
@@ -147,7 +148,7 @@ newtype Watch = Watch CInt deriving (Eq, Ord, Show, Typeable)
 --   when receiving an event. ('EventFlag')   Polymorphic
 --   parameters mean that the flag may appear in either context.
 
-newtype Mask a = Mask CUInt deriving (Eq, Show, Typeable)
+newtype Mask a = Mask Word32 deriving (Eq, Show, Typeable)
 
 -- | Computes the union of two 'Mask's.
 instance Monoid (Mask a) where
@@ -296,7 +297,7 @@ in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
 -- | A newtype wrapper for the 'cookie' field of the 'Event'.
 
-newtype Cookie = Cookie CUInt deriving (Eq, Ord, Show, Typeable)
+newtype Cookie = Cookie Word32 deriving (Eq, Ord, Show, Typeable)
 
 data Event = Event
    { wd     :: {-# UNPACK #-} !Watch
@@ -527,9 +528,9 @@ peekMessage Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
   start  <- readIORef startRef
   let ptr = ptr0 `plusPtr` start
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
-  mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO CUInt)
-  cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO CUInt)
-  len    <-            ((#peek struct inotify_event, len   ) ptr :: IO CUInt)
+  mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO Word32)
+  cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO Word32)
+  len    <-            ((#peek struct inotify_event, len   ) ptr :: IO Word32)
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
@@ -541,7 +542,7 @@ consumeMessage Inotify{..} = do
   start <- readIORef startRef
   len   <- withForeignPtr buffer $ \ptr0 -> do
                let ptr = ptr0 `plusPtr` start
-               (#peek struct inotify_event, len   ) ptr :: IO CUInt
+               (#peek struct inotify_event, len   ) ptr :: IO Word32
   writeIORef startRef $! start + (#size struct inotify_event) + fromIntegral len
 {-# INLINE consumeMessage #-}
 
