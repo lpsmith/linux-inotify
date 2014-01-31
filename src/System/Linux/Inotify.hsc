@@ -3,6 +3,8 @@
 {-# LANGUAGE BangPatterns, DoAndIfThenElse   #-}
 {-# LANGUAGE EmptyDataDecls                  #-}
 {-# LANGUAGE DeriveDataTypeable              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving      #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  System.Linux.Inotify
@@ -94,6 +96,8 @@ import Foreign.C
 import qualified Foreign.Concurrent as FC
 import System.Posix.ByteString.FilePath (RawFilePath)
 
+import Data.Hashable
+
 -- | 'Inotify' represents an inotify descriptor,  to which watches can be added
 --   and events can be read from.   Internally, it also includes a buffer
 --   of events that have been delivered to the application from the kernel
@@ -138,6 +142,9 @@ rmWatch :: Watch -> IO ()
 --   used with that descriptor;  incorrect behavior will otherwise result.
 
 newtype Watch = Watch CInt deriving (Eq, Ord, Show, Typeable)
+
+instance Hashable Watch where
+   hashWithSalt salt (Watch (CInt x)) = hashWithSalt salt x
 
 -- | Represents the mask,  which in inotify terminology is a union
 --   of bit flags representing various event types and watch options.
@@ -296,7 +303,7 @@ in_UNMOUNT = Mask (#const IN_UNMOUNT)
 
 -- | A newtype wrapper for the 'cookie' field of the 'Event'.
 
-newtype Cookie = Cookie Word32 deriving (Eq, Ord, Show, Typeable)
+newtype Cookie = Cookie Word32 deriving (Eq, Ord, Show, Typeable, Hashable)
 
 data Event = Event
    { wd     :: {-# UNPACK #-} !Watch
