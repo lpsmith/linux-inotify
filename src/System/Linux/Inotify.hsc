@@ -11,9 +11,8 @@
 --
 -- Maintainer  :  leon@melding-monads.com
 --
--- Although this module copies portions of the inotify manual page,  it may
--- be useful to consult inotify's manual page useful in conjunction with this
--- documentation:
+-- Although this module copies portions of inotify's manual page,  it may
+-- be useful to consult the original in conjunction with this documentation:
 --
 -- <http://man7.org/linux/man-pages/man7/inotify.7.html>
 --
@@ -314,11 +313,9 @@ data Event = Event
    , name   :: {-# UNPACK #-} !B.ByteString
      -- ^ The name field is only present when an event is returned for a file
      --   inside a watched directory; it identifies the file pathname relative
-     --   to the watched directory.  This pathname is null-terminated, and may
-     --   include further null bytes to align subsequent reads to a suitable
-     --   address boundary.
+     --   to the watched directory.
      --
-     --   The proper interpretation of this seems to be to use
+     --   The proper Haskell interpretation of this seems to be to use
      --   'GHC.IO.getForeignEncoding' and then unpack it to a 'String'
      --   or decode it using the text package.
    } deriving (Eq, Show, Typeable)
