@@ -1,5 +1,5 @@
 name:                linux-inotify
-version:             0.1.0.1
+version:             0.2.0.0
 synopsis:            Thinner binding to the Linux Kernel's inotify interface
 description:
     This is a binding for GHC 7 to the Linux Kernel's inotify interface,
@@ -59,4 +59,4 @@ source-repository head
 source-repository this
   type:     git
   location: http://github.com/lpsmith/linux-inotify
-  tag:      v0.1.0.1
+  tag:      v0.2.0.0
