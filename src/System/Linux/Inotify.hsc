@@ -463,9 +463,7 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 getEvent :: Inotify -> IO Event
 getEvent inotify@Inotify{..} = do
     fillBufferBlocking inotify "System.Linux.Inotify.getEvent"
-    evt <- peekMessage inotify
-    consumeMessage inotify
-    return evt
+    getMessage True inotify
 
 -- | Returns an inotify event,  blocking until one is available.
 --
@@ -479,7 +477,7 @@ getEvent inotify@Inotify{..} = do
 peekEvent :: Inotify -> IO Event
 peekEvent inotify@Inotify{..} = do
     fillBufferBlocking inotify "System.Linux.Inotify.peekEvent"
-    peekMessage inotify
+    getMessage False inotify
 
 hasEmptyBuffer :: Inotify -> IO Bool
 hasEmptyBuffer Inotify{..} = do
@@ -527,8 +525,8 @@ fillBufferNonBlocking inotify@Inotify{..} funcName = do
                then loop
                else throwErrno funcName
 
-peekMessage :: Inotify -> IO Event
-peekMessage Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
+getMessage :: Bool -> Inotify -> IO Event
+getMessage doConsume Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
   start  <- readIORef startRef
   let ptr = ptr0 `plusPtr` start
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
@@ -538,17 +536,10 @@ peekMessage Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
+  when doConsume $ writeIORef startRef $! 
+                       start + (#size struct inotify_event) + fromIntegral len
   return $! Event{..}
-{-# INLINE peekMessage #-}
-
-consumeMessage :: Inotify -> IO ()
-consumeMessage Inotify{..} = do
-  start <- readIORef startRef
-  len   <- withForeignPtr buffer $ \ptr0 -> do
-               let ptr = ptr0 `plusPtr` start
-               (#peek struct inotify_event, len   ) ptr :: IO Word32
-  writeIORef startRef $! start + (#size struct inotify_event) + fromIntegral len
-{-# INLINE consumeMessage #-}
+{-# INLINE getMessage #-}
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -561,8 +552,7 @@ getEventNonBlocking inotify@Inotify{..} = do
     if isEmpty
     then return Nothing
     else do
-      evt <- peekMessage inotify
-      consumeMessage inotify
+      evt <- getMessage True inotify
       return $! Just evt
   where
     funcName = "System.Linux.Inotify.getEventNonBlocking"
@@ -582,7 +572,7 @@ peekEventNonBlocking inotify@Inotify{..} = do
     if isEmpty
     then return Nothing
     else do
-      evt <- peekMessage inotify
+      evt <- getMessage False inotify
       return $! Just evt
   where
     funcName = "System.Linux.Inotify.peekEventNonBlocking"
@@ -596,8 +586,7 @@ getEventFromBuffer inotify = do
     if isEmpty
     then return Nothing
     else do
-       evt <- peekMessage inotify
-       consumeMessage inotify
+       evt <- getMessage True inotify
        return $! Just evt
 
 -- | Returns an inotify event only if one is available in 'Inotify's
@@ -613,7 +602,7 @@ peekEventFromBuffer inotify@Inotify{..} = do
     if isEmpty
     then return Nothing
     else do
-       evt <- peekMessage inotify
+       evt <- getMessage False inotify
        return $! Just evt
 
 -- | Closes an inotify descriptor,  freeing the resources associated
