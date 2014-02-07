@@ -1,5 +1,5 @@
 name:                linux-inotify
-version:             0.2.0.0
+version:             0.2.0.1
 synopsis:            Thinner binding to the Linux Kernel's inotify interface
 description:
     This is a binding for GHC 7 to the Linux Kernel's inotify interface,
@@ -28,7 +28,7 @@ description:
     1.   Due to the use of `inotify_init1`,  `linux-inotify` currently
     requires linux 2.6.27 or later,  even though `inotify` support
     debuted in linux 2.6.13.   You can check which version of linux is
-    on a machine via `uname -a`.   I would like to fix this at some point,
+    on a machine via `uname` `-a`.   I would like to fix this at some point,
     but it isn't a personal priority.
     .
     2.   `linux-inotify` requires GHC 7.0.2 or later,  whereas `hinotify`
@@ -59,4 +59,4 @@ source-repository head
 source-repository this
   type:     git
   location: http://github.com/lpsmith/linux-inotify
-  tag:      v0.2.0.0
+  tag:      v0.2.0.1
