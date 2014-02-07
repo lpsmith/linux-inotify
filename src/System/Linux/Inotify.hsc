@@ -250,7 +250,7 @@ in_OPEN = Mask (#const IN_OPEN)
 -- | A union of all flags above;  this is not a separate flag but a convenience
 --   definition.
 in_ALL_EVENTS :: Mask a
-in_ALL_EVENTS = Mask (#const IN_OPEN)
+in_ALL_EVENTS = Mask (#const IN_ALL_EVENTS)
 
 -- | (since Linux 2.6.15) Don't  dereference  pathname  if it is a symbolic link.
 in_DONT_FOLLOW :: Mask WatchFlag
@@ -374,7 +374,8 @@ initWith InotifyOptions{..} = do
   where flags = (#const IN_NONBLOCK) .|. (#const IN_CLOEXEC)
 
 -- | Adds a watch on the inotify descriptor,  returns a watch descriptor.
---   This function is thread safe.
+--   The mask controls which events are delivered to your application,
+--   as well as some additional options.  This function is thread safe.
 
 addWatch :: Inotify -> FilePath -> Mask WatchFlag -> IO Watch
 addWatch Inotify{fd} path !mask =
