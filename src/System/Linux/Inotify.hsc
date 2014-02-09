@@ -293,7 +293,8 @@ in_IGNORED = Mask (#const IN_IGNORED)
 in_ISDIR :: Mask EventFlag
 in_ISDIR = Mask (#const IN_ISDIR)
 
--- | Event queue overflowed (wd is -1 for this event).
+-- | Event queue overflowed (wd is -1 for this event).  The size of the
+--   queue is available at @/proc/sys/fs/inotify/max_queued_events@.
 in_Q_OVERFLOW :: Mask EventFlag
 in_Q_OVERFLOW = Mask (#const IN_Q_OVERFLOW)
 
@@ -537,7 +538,7 @@ getMessage doConsume Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
   name <- if len == 0
             then return B.empty
             else B.packCString ((#ptr struct inotify_event, name) ptr)
-  when doConsume $ writeIORef startRef $! 
+  when doConsume $ writeIORef startRef $!
                        start + (#size struct inotify_event) + fromIntegral len
   return $! Event{..}
 {-# INLINE getMessage #-}
