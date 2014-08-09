@@ -510,9 +510,11 @@ fillBufferBlocking inotify@Inotify{..} funcName action =
 
     haveLock = do
       fillBuffer inotify action' (throwIO $! fdClosed funcName) $ \err -> do
-          if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
+          if err == eAGAIN || err == eWOULDBLOCK
           then return (waitFd >> needLock)
-          else throwErrno funcName
+          else if err == eINTR
+               then haveLock
+               else throwErrno funcName
 
     needLock = join $ withLock bufferLock $ haveLock
 
