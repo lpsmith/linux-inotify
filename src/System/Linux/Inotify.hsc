@@ -499,18 +499,22 @@ fillBuffer Inotify{..} action closedHandler errorHandler = do
 {-# INLINE fillBuffer #-}
 
 fillBufferBlocking :: Inotify -> String -> IO a -> IO a
-fillBufferBlocking inotify@Inotify{..} funcName action = do
-    isEmpty <- hasEmptyBuffer inotify
-    if isEmpty
-    then loop
-    else action
+fillBufferBlocking inotify@Inotify{..} funcName action =
+    join $ withLock bufferLock $ do
+      isEmpty <- hasEmptyBuffer inotify
+      if isEmpty
+      then haveLock
+      else action'
   where
-    loop = join $ withLock bufferLock $ do
-             fillBuffer inotify (action >>= return . return)
-                                (throwIO $! fdClosed funcName) $ \err -> do
-               if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
-               then return (waitFd >> loop)
-               else throwErrno funcName
+    action' = action >>= return . return
+
+    haveLock = do
+      fillBuffer inotify action' (throwIO $! fdClosed funcName) $ \err -> do
+          if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
+          then return (waitFd >> needLock)
+          else throwErrno funcName
+
+    needLock = join $ withLock bufferLock $ haveLock
 
     -- FIXME: We probably need to read the MVar and wait on the fd atomically.
     --
