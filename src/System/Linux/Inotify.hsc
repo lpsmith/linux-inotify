@@ -84,7 +84,8 @@ import Data.Typeable
 import Data.Function ( on )
 import Data.Word
 import Control.Concurrent ( threadWaitRead )
-import Control.Exception  ( throwIO, mask_, onException )
+import Control.Exception ( throwIO, mask_, onException )
+import qualified Control.Exception as E
 import GHC.Conc ( closeFdWith )
 import GHC.IO.Exception
 import Control.Concurrent.MVar
@@ -484,7 +485,8 @@ hasEmptyBuffer Inotify{..} = do
 {-# INLINE hasEmptyBuffer #-}
 
 fillBuffer :: Inotify -> IO a -> IO a -> (Errno -> IO a) -> IO a
-fillBuffer Inotify{..} action closedHandler errorHandler = do
+fillBuffer Inotify{..} action closedHandler errorHandler =
+  E.mask $ \restore -> do
     numBytes <- withFd fdRef (return (-2)) $ \fd -> do
                     withForeignPtr buffer $ \ptr -> do
                         c_unsafe_read fd ptr (fromIntegral bufSize)
@@ -495,7 +497,7 @@ fillBuffer Inotify{..} action closedHandler errorHandler = do
     else do
         writeIORef startRef 0
         writeIORef endRef (fromIntegral numBytes)
-        action
+        restore action
 {-# INLINE fillBuffer #-}
 
 fillBufferBlocking :: Inotify -> String -> IO a -> IO a
@@ -661,7 +663,7 @@ peekEventFromBuffer inotify@Inotify{..} = do
 -- a finalizer,  although it is often preferable to call 'close' yourself.
 
 close :: Inotify -> IO ()
-close Inotify{..} = do
+close Inotify{..} = mask_ $ do
   fd <- swapMVar fdRef (-1)
   if fd >= 0
   then closeFdWith closeFd fd
