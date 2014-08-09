@@ -458,9 +458,8 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 
 getEvent :: Inotify -> IO Event
 getEvent inotify@Inotify{..} = do
-  withLock bufferLock $ do
     fillBufferBlocking inotify "System.Linux.Inotify.getEvent"
-    getMessage True inotify
+    withLock bufferLock $ getMessage True inotify
 
 -- | Returns an inotify event,  blocking until one is available.
 --
@@ -474,9 +473,8 @@ getEvent inotify@Inotify{..} = do
 
 peekEvent :: Inotify -> IO Event
 peekEvent inotify@Inotify{..} = do
-  withLock bufferLock $ do
     fillBufferBlocking inotify "System.Linux.Inotify.peekEvent"
-    getMessage False inotify
+    withLock bufferLock $ getMessage False inotify
 
 hasEmptyBuffer :: Inotify -> IO Bool
 hasEmptyBuffer Inotify{..} = do
@@ -500,6 +498,15 @@ fillBuffer Inotify{..} val closedHandler errorHandler = do
         return val
 {-# INLINE fillBuffer #-}
 
+fillBufferWithLock :: Inotify -> a -> IO a -> (Errno -> IO a) -> IO a
+fillBufferWithLock inotify@Inotify{bufferLock} val closedHandler errorHandler
+  = join $ withLock bufferLock $ do
+      fillBuffer inotify
+                 (return val)
+                 (return closedHandler)
+                 (return . errorHandler)
+{-# INLINE fillBufferWithLock #-}
+
 fillBufferBlocking :: Inotify -> String -> IO ()
 fillBufferBlocking inotify@Inotify{..} funcName = do
     isEmpty <- hasEmptyBuffer inotify
@@ -507,7 +514,7 @@ fillBufferBlocking inotify@Inotify{..} funcName = do
   where
     loop = do
       waitFd
-      fillBuffer inotify () (throwIO $! fdClosed funcName) $ \err -> do
+      fillBufferWithLock inotify () (throwIO $! fdClosed funcName) $ \err -> do
           if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
           then loop
           else throwErrno funcName
@@ -520,9 +527,10 @@ fillBufferBlocking inotify@Inotify{..} funcName = do
     --
     --   This should be a _relatively_ harmless condition in this particular
     --   context,  as the MVar will be re-read before we try to actually
-    --   read anything from the Fd.  However, this could lead to a deadlock
-    --   or near-deadlock state,  when that new descriptor isn't going to
-    --   become readable in a timely fashion.
+    --   read anything from the Fd,  which will result in an exception.
+    --   However, this could lead to a deadlock or near-deadlock state,
+    --   where we are blocked on a new descriptor
+    --   that isn't going to become readable in a timely fashion.
     waitFd = do
       fd <- readMVar fdRef
       if fd >= 0
