@@ -537,7 +537,7 @@ fillBufferNonBlocking inotify@Inotify{..} funcName = do
     else return False
   where
     loop = do
-      fillBuffer inotify False (return False) $ \err -> do
+      fillBuffer inotify False (return True) $ \err -> do
           if err == eAGAIN || err == eWOULDBLOCK
           then return True
           else if err == eINTR
