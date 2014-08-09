@@ -505,14 +505,12 @@ fillBufferBlocking inotify@Inotify{..} funcName action = do
     then loop
     else action
   where
-    loop = do
-      waitFd
-      join $ withLock bufferLock $ do
-        fillBuffer inotify (action >>= return . return)
-                           (throwIO $! fdClosed funcName) $ \err -> do
-          if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
-          then return loop
-          else throwErrno funcName
+    loop = join $ withLock bufferLock $ do
+             fillBuffer inotify (action >>= return . return)
+                                (throwIO $! fdClosed funcName) $ \err -> do
+               if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
+               then return (waitFd >> loop)
+               else throwErrno funcName
 
     -- FIXME: We probably need to read the MVar and wait on the fd atomically.
     --
