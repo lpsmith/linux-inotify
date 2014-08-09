@@ -457,9 +457,9 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 --   throw an 'IOException'.
 
 getEvent :: Inotify -> IO Event
-getEvent inotify@Inotify{..} = do
-    fillBufferBlocking inotify "System.Linux.Inotify.getEvent"
-    withLock bufferLock $ getMessage True inotify
+getEvent inotify@Inotify{..} =
+    fillBufferBlocking inotify "System.Linux.Inotify.getEvent" $ do
+        getMessage True inotify
 
 -- | Returns an inotify event,  blocking until one is available.
 --
@@ -472,9 +472,9 @@ getEvent inotify@Inotify{..} = do
 --   throw an 'IOError'.
 
 peekEvent :: Inotify -> IO Event
-peekEvent inotify@Inotify{..} = do
-    fillBufferBlocking inotify "System.Linux.Inotify.peekEvent"
-    withLock bufferLock $ getMessage False inotify
+peekEvent inotify@Inotify{..} =
+    fillBufferBlocking inotify "System.Linux.Inotify.peekEvent" $ do
+        getMessage False inotify
 
 hasEmptyBuffer :: Inotify -> IO Bool
 hasEmptyBuffer Inotify{..} = do
@@ -483,8 +483,8 @@ hasEmptyBuffer Inotify{..} = do
     return $! (start >= end)
 {-# INLINE hasEmptyBuffer #-}
 
-fillBuffer :: Inotify -> a -> IO a -> (Errno -> IO a) -> IO a
-fillBuffer Inotify{..} val closedHandler errorHandler = do
+fillBuffer :: Inotify -> IO a -> IO a -> (Errno -> IO a) -> IO a
+fillBuffer Inotify{..} action closedHandler errorHandler = do
     numBytes <- withFd fdRef (return (-2)) $ \fd -> do
                     withForeignPtr buffer $ \ptr -> do
                         c_unsafe_read fd ptr (fromIntegral bufSize)
@@ -495,31 +495,29 @@ fillBuffer Inotify{..} val closedHandler errorHandler = do
     else do
         writeIORef startRef 0
         writeIORef endRef (fromIntegral numBytes)
-        return val
+        action
 {-# INLINE fillBuffer #-}
 
-fillBufferWithLock :: Inotify -> a -> IO a -> (Errno -> IO a) -> IO a
-fillBufferWithLock inotify@Inotify{bufferLock} val closedHandler errorHandler
-  = join $ withLock bufferLock $ do
-      fillBuffer inotify
-                 (return val)
-                 (return closedHandler)
-                 (return . errorHandler)
-{-# INLINE fillBufferWithLock #-}
-
-fillBufferBlocking :: Inotify -> String -> IO ()
-fillBufferBlocking inotify@Inotify{..} funcName = do
+fillBufferBlocking :: Inotify -> String -> IO a -> IO a
+fillBufferBlocking inotify@Inotify{..} funcName action = do
     isEmpty <- hasEmptyBuffer inotify
-    when isEmpty loop
+    if isEmpty
+    then loop
+    else action
   where
     loop = do
       waitFd
-      fillBufferWithLock inotify () (throwIO $! fdClosed funcName) $ \err -> do
+      join $ withLock bufferLock $ do
+        fillBuffer inotify (action >>= return . return)
+                           (throwIO $! fdClosed funcName) $ \err -> do
           if err == eINTR || err == eAGAIN || err == eWOULDBLOCK
-          then loop
+          then return loop
           else throwErrno funcName
 
     -- FIXME: We probably need to read the MVar and wait on the fd atomically.
+    --
+    --   (But we don't want to hold the MVar while waiting on the fd,
+    --    otherwise we'd cause close and *EventNonBlocking to block!)
     --
     --   It seems like it would be possible for this thread to read the fd,
     --   then for other threads to close the fd and then allocate a new fd,
@@ -529,8 +527,9 @@ fillBufferBlocking inotify@Inotify{..} funcName = do
     --   context,  as the MVar will be re-read before we try to actually
     --   read anything from the Fd,  which will result in an exception.
     --   However, this could lead to a deadlock or near-deadlock state,
-    --   where we are blocked on a new descriptor
-    --   that isn't going to become readable in a timely fashion.
+    --   where we are blocked on a new descriptor that isn't going to
+    --   become readable in a timely fashion when we really should be
+    --   throwing an exception immediately.
     waitFd = do
       fd <- readMVar fdRef
       if fd >= 0
@@ -545,7 +544,7 @@ fillBufferNonBlocking inotify@Inotify{..} funcName = do
     else return False
   where
     loop = do
-      fillBuffer inotify False (return True) $ \err -> do
+      fillBuffer inotify (return False) (return True) $ \err -> do
           if err == eAGAIN || err == eWOULDBLOCK
           then return True
           else if err == eINTR
