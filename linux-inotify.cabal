@@ -1,5 +1,5 @@
 name:                linux-inotify
-version:             0.2.0.1
+version:             0.3.0.0
 synopsis:            Thinner binding to the Linux Kernel's inotify interface
 description:
     This is a binding for GHC 7 to the Linux Kernel's inotify interface,
@@ -31,16 +31,17 @@ description:
     on a machine via `uname` `-a`.   I would like to fix this at some point,
     but it isn't a personal priority.
     .
-    2.   `linux-inotify` requires GHC 7.0.2 or later,  whereas `hinotify`
+    2.   `linux-inotify` requires GHC 7.8.1 or later,  whereas `hinotify`
     works with many versions of GHC 6.   I have no plans to fix this.
 license:             BSD3
 license-file:        LICENSE
 author:              Leon P Smith
 maintainer:          leon@melding-monads.com
-copyright:           (c) 2013-2014 Leon P Smith
+copyright:           (c) 2013-2015 Leon P Smith
 category:            System
 build-type:          Simple
 cabal-version:       >=1.8
+Extra-Doc-Files:     CHANGES.md
 
 library
   hs-source-dirs:      src
