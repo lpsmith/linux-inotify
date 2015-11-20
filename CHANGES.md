@@ -1,3 +1,12 @@
+Version 0.3.0.1:  (2015-11-20)
+  * `getEventNonBlocking` and `peekEventNonBlocking` now raise an
+    `IOException` when they are called on an inotify descriptor that
+    has been closed and have an empty buffer,  instead of returning
+    `Nothing`.  This is more in line with the behavior of other IO
+    functions such as `Data.ByteString.hGetNonBlocking`.
+
+  * Attempted to improve documentation.
+
 Version 0.3.0.0:  (2015-11-20)
   * Use-after-close now result in exceptions rather than undefined behavior.
 

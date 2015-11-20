@@ -84,9 +84,9 @@ import Data.Monoid
 import Data.Typeable
 import Data.Function ( on )
 import Data.Word
-import Control.Exception ( throwIO, mask_, onException )
+import Control.Exception ( IOException, throwIO, mask_, onException )
 import GHC.Conc ( closeFdWith, threadWaitReadSTM, atomically )
-import GHC.IO.Exception
+import GHC.IO.Exception hiding ( IOException )
 import Control.Concurrent.MVar
 import Control.Monad
 import System.Posix
@@ -458,8 +458,10 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 --
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
---   throw an 'IOException'.  It is safe to call this function from
---   multiple threads at the same time.
+--   throw an 'IOException'.
+--
+--   It is safe to call this function from multiple threads at the
+--   same time.
 
 getEvent :: Inotify -> IO Event
 getEvent inotify@Inotify{..} = loop
@@ -489,7 +491,7 @@ getEvent inotify@Inotify{..} = loop
 --
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
---   throw an 'IOError'.
+--   throw an 'IOException'.
 --
 --   It is safe to call this function from multiple threads at the same
 --   time.
@@ -554,11 +556,13 @@ getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr0 -> do
 --
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
---   return 'Nothing'.
+--   throw an 'IOException'.
 --
 --   One possible downside of the current implementation is that
---   returning 'Nothing' necessarily results in a system call, unless
---   the inotify descriptor has been closed.
+--   returning 'Nothing' necessarily results in a system call.
+--
+--   It is safe to call this function from multiple threads at the
+--   same time.
 
 getEventNonBlocking :: Inotify -> IO (Maybe Event)
 getEventNonBlocking inotify@Inotify{..} = act
@@ -570,7 +574,7 @@ getEventNonBlocking inotify@Inotify{..} = act
                if start < end
                then Just <$> getMessage inotify start True
                else fillBuffer funcName inotify
-                        (return Nothing)
+                        (throwIO $! fdClosed funcName)
                         (\_fd -> return Nothing)
                         (Just <$> getMessage inotify 0 True)
 
@@ -582,11 +586,13 @@ getEventNonBlocking inotify@Inotify{..} = act
 --
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
---   return 'Nothing'.
+--   throw an 'IOException'.
 --
 --   One possible downside of the current implementation is that
---   returning 'Nothing' necessarily results in a system call, unless
---   the inotify descriptor has been closed.
+--   returning 'Nothing' necessarily results in a system call.
+--
+--   It is safe to call this function from multiple threads at the
+--   same time.
 
 peekEventNonBlocking :: Inotify -> IO (Maybe Event)
 peekEventNonBlocking inotify@Inotify{..} = act
@@ -598,14 +604,19 @@ peekEventNonBlocking inotify@Inotify{..} = act
                if start < end
                then Just <$> getMessage inotify start False
                else fillBuffer funcName inotify
-                        (return Nothing)
+                        (throwIO $! fdClosed funcName)
                         (\_fd -> return Nothing)
                         (do
                             writeIORef startRef 0
                             Just <$> getMessage inotify 0 False)
 
 -- | Returns an inotify event only if one is available in 'Inotify'\'s
---   buffer.  This won't ever make a system call.
+--   buffer.  This won't ever make a system call,  and should not
+--   ever throw an exception.
+--
+--   It is safe to call this function from multiple threads at the
+--   same time.
+
 
 getEventFromBuffer :: Inotify -> IO (Maybe Event)
 getEventFromBuffer inotify@Inotify{..} = act
@@ -618,11 +629,15 @@ getEventFromBuffer inotify@Inotify{..} = act
                else return Nothing
 
 -- | Returns an inotify event only if one is available in 'Inotify'\'s
---   buffer.  This won't ever make a system call.
+--   buffer.  This won't ever make a system call,  and should not ever
+--   throw an exception.
 --
 --   If this returns an event, then the next read from the inotify
 --   descriptor will return the same event,  and this read will not
 --   result in a system call.
+--
+--   It is safe to call this function from multiple threads at the
+--   same time.
 
 peekEventFromBuffer :: Inotify -> IO (Maybe Event)
 peekEventFromBuffer inotify@Inotify{..} = act
