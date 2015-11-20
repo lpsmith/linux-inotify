@@ -8,7 +8,7 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  System.Linux.Inotify
--- Copyright   :  (c) 2013-2014 Leon P Smith
+-- Copyright   :  (c) 2013-2015 Leon P Smith
 -- License     :  BSD3
 --
 -- Maintainer  :  leon@melding-monads.com
@@ -33,6 +33,7 @@ module System.Linux.Inotify
      , Cookie(..)
      , init
      , close
+     , isClosed
      , initWith
      , InotifyOptions(..)
      , defaultInotifyOptions
@@ -646,6 +647,11 @@ peekEventFromBuffer inotify@Inotify{..} = act
 
 close :: Inotify -> IO ()
 close Inotify{fdRef} = closeFdRef fdRef
+
+-- | Has the inotify descriptor been closed?
+
+isClosed :: Inotify -> IO Bool
+isClosed Inotify{fdRef} = withFdRef fdRef (return True) (const $ return False)
 
 closeFdRef :: MVar Fd -> IO ()
 closeFdRef fdRef = mask_ $ do
