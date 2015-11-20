@@ -45,8 +45,8 @@ cabal-version:       >=1.8
 library
   hs-source-dirs:      src
   exposed-modules:     System.Linux.Inotify
-  build-depends:       base >= 4 && < 5,
-                       bytestring >= 0.9,
+  build-depends:       base >= 4.7 && < 5,
+                       bytestring >= 0.10.4,
                        hashable >= 1.1.2,
                        unix
 

@@ -83,10 +83,8 @@ import Data.Monoid
 import Data.Typeable
 import Data.Function ( on )
 import Data.Word
-import Control.Concurrent ( threadWaitRead )
 import Control.Exception ( throwIO, mask_, onException )
-import qualified Control.Exception as E
-import GHC.Conc ( closeFdWith )
+import GHC.Conc ( closeFdWith, threadWaitReadSTM, atomically )
 import GHC.IO.Exception
 import Control.Concurrent.MVar
 import Control.Monad
@@ -360,24 +358,24 @@ initWith InotifyOptions{..} = do
     bufferLock <- newMVar ()
     let bufSize = bufferSize
     buffer   <- mallocForeignPtrBytes bufSize
+    FC.addForeignPtrFinalizer buffer (closeFdRef fdRef)
     startRef <- newIORef 0
     endRef   <- newIORef 0
-    let !inotify = Inotify{..}
-    FC.addForeignPtrFinalizer buffer (close inotify)
-    return inotify
+    return $! Inotify{..}
   where flags = (#const IN_NONBLOCK) .|. (#const IN_CLOEXEC)
 
 -- | Adds a watch on the inotify descriptor,  returns a watch descriptor.
 --   The mask controls which events are delivered to your application,
---   as well as some additional options.
+--   as well as some additional options.  This function is thread safe.
 
 addWatch :: Inotify -> FilePath -> Mask WatchFlag -> IO Watch
-addWatch Inotify{fdRef} path !mask = do
-    withCString path $ \cpath -> do
-      withFd fdRef (throwIO $! fdClosed funcName) $ \fd -> do
-        Watch <$> throwErrnoPathIfMinus1 funcName path
-                  (c_inotify_add_watch fd cpath mask)
-  where funcName = "System.Linux.Inotify.addWatch"
+addWatch Inotify{fdRef} path !mask = act
+  where
+    funcName = "System.Linux.Inotify.addWatch"
+    act = withCString path $ \cpath -> do
+              withFdRefError fdRef funcName $ \fd -> do
+                  Watch <$> throwErrnoPathIfMinus1 funcName path
+                                (c_inotify_add_watch fd cpath mask)
 
 -- | A variant of 'addWatch' that operates on a 'RawFilePath', which is
 -- a file path represented as strict 'ByteString'.   One weakness of the
@@ -385,20 +383,22 @@ addWatch Inotify{fdRef} path !mask = do
 -- then any unicode paths will be mangled in the error message.
 
 addWatch_ :: Inotify -> RawFilePath -> Mask WatchFlag -> IO Watch
-addWatch_ Inotify{fdRef} path !mask = do
-    B.useAsCString path $ \cpath -> do
-      withFd fdRef (throwIO $! fdClosed funcName) $ \fd -> do
-        Watch <$> throwErrnoPathIfMinus1 funcName (B8.unpack path)
-                  (c_inotify_add_watch fd cpath mask)
-  where funcName = "System.Linux.Inotify.addWatch_"
+addWatch_ Inotify{fdRef} path !mask = act
+  where
+    funcName = "System.Linux.Inotify.addWatch_"
+    act = B.useAsCString path $ \cpath -> do
+              withFdRefError fdRef funcName $ \fd -> do
+                  Watch <$> throwErrnoPathIfMinus1 funcName (B8.unpack path)
+                                (c_inotify_add_watch fd cpath mask)
 
 
 -- | Stops watching a path for changes.  This watch descriptor must be
 --   associated with the particular inotify port,  otherwise undefined
 --   behavior can happen.
 --
---   This binding ignores @inotify_rm_watch@'s errno when it is @EINVAL@,\
---   so it is ok to delete a previously removed watch descriptor.
+--   This function is thread safe. This binding ignores @inotify_rm_watch@'s
+--   errno when it is @EINVAL@, so it is ok to delete a previously
+--   removed or non-existent watch descriptor.
 --
 --   However long lived applications that set and remove many watches
 --   should still endeavor to avoid calling `rmWatch` on removed
@@ -414,15 +414,17 @@ addWatch_ Inotify{fdRef} path !mask = do
 --   all cases.
 
 rmWatch :: Inotify -> Watch -> IO ()
-rmWatch Inotify{fdRef} !wd = do
-  withFd fdRef (return ()) $ \fd -> do
-    res <- c_inotify_rm_watch fd wd
-    when (res == -1) $ do
-      err <- getErrno
-      if err == eINVAL
-      then return ()
-      else throwErrno funcName
-  where funcName = "System.Linux.Inotify.rmWatch"
+rmWatch Inotify{fdRef} !wd = act
+  where
+    funcName = "System.Linux.Inotify.rmWatch"
+    act = do
+        res <- withFdRefError fdRef funcName $ \fd -> c_inotify_rm_watch fd wd
+        when (res == -1) $ do
+            err <- getErrno
+            if err == eINVAL
+            then return ()
+            else throwErrno funcName
+
 {--
 -- | Stops watching a path for changes.  This version throws an exception
 --   on @EINVAL@,  so it is not ok to delete a non-existant watch
@@ -455,12 +457,28 @@ rmWatch' (Inotify (Fd !fd)) (Watch !wd) = do
 --
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
---   throw an 'IOException'.
+--   throw an 'IOException'.  It is safe to call this function from
+--   multiple threads at the same time.
 
 getEvent :: Inotify -> IO Event
-getEvent inotify@Inotify{..} =
-    fillBufferBlocking inotify "System.Linux.Inotify.getEvent" $ do
-        getMessage True inotify
+getEvent inotify@Inotify{..} = loop
+  where
+    funcName = "System.Linux.Inotify.getEvent"
+    loop = join $ withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then (do
+                        evt <- getMessage inotify start True
+                        return (return evt)                  )
+               else fillBuffer funcName inotify
+                        (throwIO $! fdClosed funcName)
+                        (\fd -> do
+                            (waitRead,_) <- threadWaitReadSTM fd
+                            return (atomically waitRead >> loop) )
+                        (do
+                            evt <- getMessage inotify 0 True
+                            return (return evt)                  )
 
 -- | Returns an inotify event,  blocking until one is available.
 --
@@ -471,95 +489,53 @@ getEvent inotify@Inotify{..} =
 --   If the inotify descriptor is closed,  this function will return
 --   an event from the buffer, if available.   Otherwise,  it will
 --   throw an 'IOError'.
+--
+--   It is safe to call this function from multiple threads at the same
+--   time.
 
 peekEvent :: Inotify -> IO Event
-peekEvent inotify@Inotify{..} =
-    fillBufferBlocking inotify "System.Linux.Inotify.peekEvent" $ do
-        getMessage False inotify
+peekEvent inotify@Inotify{..} = loop
+  where
+    funcName = "System.Linux.Inotify.peekEvent"
+    loop = join $ withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then (do
+                        evt <- getMessage inotify start False
+                        return (return evt)                   )
+               else fillBuffer funcName inotify
+                        (throwIO $! fdClosed funcName)
+                        (\fd -> do
+                            (waitRead,_) <- threadWaitReadSTM fd
+                            return (atomically waitRead >> loop) )
+                        (do
+                            writeIORef startRef 0
+                            evt <- getMessage inotify 0 False
+                            return (return evt)                  )
 
-hasEmptyBuffer :: Inotify -> IO Bool
-hasEmptyBuffer Inotify{..} = do
-    start <- readIORef startRef
-    end   <- readIORef endRef
-    return $! (start >= end)
-{-# INLINE hasEmptyBuffer #-}
-
-fillBuffer :: Inotify -> IO a -> IO a -> (Errno -> IO a) -> IO a
-fillBuffer Inotify{..} action closedHandler errorHandler =
-  E.mask $ \restore -> do
-    numBytes <- withFd fdRef (return (-2)) $ \fd -> do
-                    withForeignPtr buffer $ \ptr -> do
-                        c_unsafe_read fd ptr (fromIntegral bufSize)
-    if numBytes < 0
-    then if numBytes == -1
-         then getErrno >>= errorHandler
-         else closedHandler
-    else do
-        writeIORef startRef 0
-        writeIORef endRef (fromIntegral numBytes)
-        restore action
+fillBuffer :: String -> Inotify -> IO a -> (Fd -> IO a) -> IO a -> IO a
+fillBuffer funcName Inotify{..} closedHandler wouldBlock done =
+    withFdRef fdRef closedHandler loop
+  where
+    loop fd = do
+      numBytes <- withForeignPtr buffer $ \ptr -> do
+                      c_unsafe_read fd ptr (fromIntegral bufSize)
+      if numBytes == -1
+      then do
+          errno <- getErrno
+          if errno == eINTR
+          then loop fd
+          else if errno == eAGAIN || errno == eWOULDBLOCK
+               then wouldBlock fd
+               else throwErrno funcName
+      else do
+          writeIORef endRef (fromIntegral numBytes)
+          done
 {-# INLINE fillBuffer #-}
 
-fillBufferBlocking :: Inotify -> String -> IO a -> IO a
-fillBufferBlocking inotify@Inotify{..} funcName action = needLock
-  where
-    action' = action >>= return . return
-
-    needLock = join $ withLock bufferLock $ do
-      isEmpty <- hasEmptyBuffer inotify
-      if isEmpty
-      then haveLock
-      else action'
-
-    haveLock = do
-      fillBuffer inotify action' (throwIO $! fdClosed funcName) $ \err -> do
-          if err == eAGAIN || err == eWOULDBLOCK
-          then return (waitFd >> needLock)
-          else if err == eINTR
-               then haveLock
-               else throwErrno funcName
-
-
-    -- FIXME: We probably need to read the MVar and wait on the fd atomically.
-    --
-    --   (But we don't want to hold the MVar while waiting on the fd,
-    --    otherwise we'd cause close and *EventNonBlocking to block!)
-    --
-    --   It seems like it would be possible for this thread to read the fd,
-    --   then for other threads to close the fd and then allocate a new fd,
-    --   and then for this thread to wait on that newly allocated fd.
-    --
-    --   This should be a _relatively_ harmless condition in this particular
-    --   context,  as the MVar will be re-read before we try to actually
-    --   read anything from the Fd,  which will result in an exception.
-    --   However, this could lead to a deadlock or near-deadlock state,
-    --   where we are blocked on a new descriptor that isn't going to
-    --   become readable in a timely fashion when we really should be
-    --   throwing an exception immediately.
-    waitFd = do
-      fd <- readMVar fdRef
-      if fd >= 0
-      then threadWaitRead fd
-      else throwIO $! fdClosed funcName
-
-fillBufferNonBlocking :: Inotify -> String -> IO Bool
-fillBufferNonBlocking inotify@Inotify{..} funcName = do
-    isEmpty <- hasEmptyBuffer inotify
-    if isEmpty
-    then loop
-    else return False
-  where
-    loop = do
-      fillBuffer inotify (return False) (return True) $ \err -> do
-          if err == eAGAIN || err == eWOULDBLOCK
-          then return True
-          else if err == eINTR
-               then loop
-               else throwErrno funcName
-
-getMessage :: Bool -> Inotify -> IO Event
-getMessage doConsume Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
-  start  <- readIORef startRef
+getMessage :: Inotify -> Int -> Bool -> IO Event
+getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr0 -> do
   let ptr = ptr0 `plusPtr` start
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
   mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO Word32)
@@ -580,20 +556,22 @@ getMessage doConsume Inotify{..} = withForeignPtr buffer $ \ptr0 -> do
 --   return 'Nothing'.
 --
 --   One possible downside of the current implementation is that
---   returning 'Nothing' necessarily results in a system call,  unless
+--   returning 'Nothing' necessarily results in a system call, unless
 --   the inotify descriptor has been closed.
 
 getEventNonBlocking :: Inotify -> IO (Maybe Event)
-getEventNonBlocking inotify@Inotify{..} = do
-  withLock bufferLock $ do
-    isEmpty <- fillBufferNonBlocking inotify funcName
-    if isEmpty
-    then return Nothing
-    else do
-      evt <- getMessage True inotify
-      return $! Just evt
+getEventNonBlocking inotify@Inotify{..} = act
   where
     funcName = "System.Linux.Inotify.getEventNonBlocking"
+    act  = withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then Just <$> getMessage inotify start True
+               else fillBuffer funcName inotify
+                        (return Nothing)
+                        (\_fd -> return Nothing)
+                        (Just <$> getMessage inotify 0 True)
 
 -- | Returns an inotify event only if one is immediately available.
 --
@@ -606,35 +584,39 @@ getEventNonBlocking inotify@Inotify{..} = do
 --   return 'Nothing'.
 --
 --   One possible downside of the current implementation is that
---   returning 'Nothing' necessarily results in a system call,
---   unless the inotify descriptor has been closed.
+--   returning 'Nothing' necessarily results in a system call, unless
+--   the inotify descriptor has been closed.
 
 peekEventNonBlocking :: Inotify -> IO (Maybe Event)
-peekEventNonBlocking inotify@Inotify{..} = do
-  withLock bufferLock $ do
-    isEmpty <- fillBufferNonBlocking inotify funcName
-    if isEmpty
-    then return Nothing
-    else do
-      evt <- getMessage False inotify
-      return $! Just evt
+peekEventNonBlocking inotify@Inotify{..} = act
   where
     funcName = "System.Linux.Inotify.peekEventNonBlocking"
+    act  = withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then Just <$> getMessage inotify start False
+               else fillBuffer funcName inotify
+                        (return Nothing)
+                        (\_fd -> return Nothing)
+                        (do
+                            writeIORef startRef 0
+                            Just <$> getMessage inotify 0 False)
 
--- | Returns an inotify event only if one is available in 'Inotify's
+-- | Returns an inotify event only if one is available in 'Inotify'\'s
 --   buffer.  This won't ever make a system call.
 
 getEventFromBuffer :: Inotify -> IO (Maybe Event)
-getEventFromBuffer inotify@Inotify{bufferLock} = do
-  withLock bufferLock $ do
-    isEmpty <- hasEmptyBuffer inotify
-    if isEmpty
-    then return Nothing
-    else do
-       evt <- getMessage True inotify
-       return $! Just evt
+getEventFromBuffer inotify@Inotify{..} = act
+  where
+    act  = withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then Just <$> getMessage inotify start True
+               else return Nothing
 
--- | Returns an inotify event only if one is available in 'Inotify's
+-- | Returns an inotify event only if one is available in 'Inotify'\'s
 --   buffer.  This won't ever make a system call.
 --
 --   If this returns an event, then the next read from the inotify
@@ -642,40 +624,47 @@ getEventFromBuffer inotify@Inotify{bufferLock} = do
 --   result in a system call.
 
 peekEventFromBuffer :: Inotify -> IO (Maybe Event)
-peekEventFromBuffer inotify@Inotify{..} = do
-  withLock bufferLock $ do
-    isEmpty <- hasEmptyBuffer inotify
-    if isEmpty
-    then return Nothing
-    else do
-       evt <- getMessage False inotify
-       return $! Just evt
+peekEventFromBuffer inotify@Inotify{..} = act
+  where
+    act  = withLock bufferLock $ do
+               start <- readIORef startRef
+               end   <- readIORef endRef
+               if start < end
+               then Just <$> getMessage inotify start False
+               else return Nothing
 
 -- | Closes an inotify descriptor,  freeing the resources associated
 -- with it.  This will also raise an 'IOException' in any threads that
 -- are blocked on 'getEvent'.
 --
--- It is safe to attempt to use an inotify descriptor after it has been
--- closed:  this will result in an 'IOException', a no-op,  or a 'Nothing'
--- result as appropriate.
+-- Attempting to use a descriptor after it is closed will safely raise
+-- an exception.  It is perfectly safe to call 'close' multiple times,  which
+-- is idempotent and will not result in an exception.
 --
 -- Descriptors will be closed after they are garbage collected, via
 -- a finalizer,  although it is often preferable to call 'close' yourself.
 
 close :: Inotify -> IO ()
-close Inotify{..} = mask_ $ do
-  fd <- swapMVar fdRef (-1)
-  if fd >= 0
-  then closeFdWith closeFd fd
-  else return ()
+close Inotify{fdRef} = closeFdRef fdRef
 
-withFd :: MVar Fd -> IO a -> (Fd -> IO a) -> IO a
-withFd fdRef closed action =
+closeFdRef :: MVar Fd -> IO ()
+closeFdRef fdRef = mask_ $ do
+    fd <- swapMVar fdRef (-1)
+    if fd >= 0
+    then closeFdWith closeFd fd
+    else return ()
+
+withFdRef :: MVar Fd -> IO a -> (Fd -> IO a) -> IO a
+withFdRef fdRef closed action =
     withMVar fdRef $ \fd ->
         if fd >= 0
         then action fd
         else closed
-{-# INLINE withFd #-}
+{-# INLINE withFdRef #-}
+
+withFdRefError :: MVar Fd -> String -> (Fd -> IO a) -> IO a
+withFdRefError fdRef funcName = withFdRef fdRef (throwIO $! fdClosed funcName)
+{-# INLINE withFdRefError #-}
 
 fdClosed :: String -> IOException
 fdClosed funcName
