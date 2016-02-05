@@ -325,8 +325,8 @@ data Event = Event
      --   to the watched directory.
      --
      --   The proper Haskell interpretation of this seems to be to use
-     --   'GHC.IO.getFileSystemEncoding' and then unpack it to a 'String'
-     --   or decode it using the text package.
+     --   'GHC.IO.Encoding.getFileSystemEncoding' and then unpack it to a 
+     --   'String' or decode it using the text package.
    } deriving (Eq, Show, Typeable)
 
 -- | Creates an inotify socket descriptor that watches can be
