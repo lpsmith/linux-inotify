@@ -53,6 +53,17 @@ library
 
   ghc-options: -Wall
 
+test-suite test
+  hs-source-dirs:
+    src,
+    test
+  type:
+    exitcode-stdio-1.0
+  main-is:
+    test.hs
+  build-depends:       base >= 4.7 && < 5,
+                       linux-inotify
+
 source-repository head
   type:     git
   location: http://github.com/lpsmith/linux-inotify

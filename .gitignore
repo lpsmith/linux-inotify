@@ -1,5 +1,7 @@
 .hg/
 _darcs/
+.cabal-sandbox/
+cabal.sandbox.config
 *~
 dist/
 *.prof

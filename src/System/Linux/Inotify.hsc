@@ -79,8 +79,9 @@ import Prelude hiding (init)
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
-import Control.Applicative
-import Data.Monoid
+-- import Control.Applicative
+-- import Data.Monoid
+-- https://ghc.haskell.org/trac/ghc/wiki/Migration/7.10#GHCsaysTheimportof...isredundant
 import Data.Typeable
 import Data.Function ( on )
 import Data.Word
@@ -325,7 +326,7 @@ data Event = Event
      --   to the watched directory.
      --
      --   The proper Haskell interpretation of this seems to be to use
-     --   'GHC.IO.Encoding.getFileSystemEncoding' and then unpack it to a 
+     --   'GHC.IO.Encoding.getFileSystemEncoding' and then unpack it to a
      --   'String' or decode it using the text package.
    } deriving (Eq, Show, Typeable)
 
@@ -538,8 +539,9 @@ fillBuffer funcName Inotify{..} closedHandler wouldBlock done =
 {-# INLINE fillBuffer #-}
 
 getMessage :: Inotify -> Int -> Bool -> IO Event
-getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr0 -> do
-  let ptr = ptr0 `plusPtr` start
+getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr -> do
+  -- let ptr = ptr0 `plusPtr` start
+  -- http://hackage.haskell.org/package/base-4.11.1.0/docs/Foreign-ForeignPtr.html#v:withForeignPtr
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
   mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO Word32)
   cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO Word32)
