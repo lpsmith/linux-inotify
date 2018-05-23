@@ -61,8 +61,10 @@ test-suite test
     exitcode-stdio-1.0
   main-is:
     test.hs
-  build-depends:       base >= 4.7 && < 5,
-                       linux-inotify
+  build-depends:
+    base >= 4.7 && < 5,
+    unix,
+    linux-inotify
 
 source-repository head
   type:     git

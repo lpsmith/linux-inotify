@@ -2,6 +2,7 @@
 _darcs/
 .cabal-sandbox/
 cabal.sandbox.config
+test/.test.json.swp
 *~
 dist/
 *.prof

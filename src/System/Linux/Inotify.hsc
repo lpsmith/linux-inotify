@@ -539,9 +539,8 @@ fillBuffer funcName Inotify{..} closedHandler wouldBlock done =
 {-# INLINE fillBuffer #-}
 
 getMessage :: Inotify -> Int -> Bool -> IO Event
-getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr -> do
-  -- let ptr = ptr0 `plusPtr` start
-  -- http://hackage.haskell.org/package/base-4.11.1.0/docs/Foreign-ForeignPtr.html#v:withForeignPtr
+getMessage Inotify{..} start doConsume = withForeignPtr buffer $ \ptr0 -> do
+  let ptr = ptr0 `plusPtr` start
   wd     <- Watch  <$> ((#peek struct inotify_event, wd    ) ptr :: IO CInt)
   mask   <- Mask   <$> ((#peek struct inotify_event, mask  ) ptr :: IO Word32)
   cookie <- Cookie <$> ((#peek struct inotify_event, cookie) ptr :: IO Word32)
