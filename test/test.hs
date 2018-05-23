@@ -34,7 +34,7 @@ testFileWrite path = do
   log "Test writing to file"
   threadDelay $ 1
   raiseSignal sigINT
-  -- sigTERM will not be caught
+  -- sigTERM will not be caught :/
 
 handler :: MVar () -> IO ()
 handler s_interrupted =
@@ -48,10 +48,11 @@ recvFunction counter signal = do
   if n == 1
      then exitSuccess
      else exitFailure
-  -- exitSuccess
 
 main:: IO()
 main = do
+    -- [file] <- getArgs
+    -- https://github.com/haskell/cabal/issues/4643
     let file = "test/test.json"
     counter <- newIORef 0
     log $ "watching file: " ++ file
