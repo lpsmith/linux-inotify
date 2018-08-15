@@ -51,6 +51,9 @@ library
                        hashable >= 1.1.2,
                        unix
 
+  if !impl(ghc >= 8.0)
+     build-depends: semigroups == 0.18.*
+
   ghc-options: -Wall
 
 source-repository head

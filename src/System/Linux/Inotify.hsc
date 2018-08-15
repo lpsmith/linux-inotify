@@ -79,11 +79,11 @@ import Prelude hiding (init)
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
-import Control.Applicative
 import Data.Monoid
 import Data.Typeable
 import Data.Function ( on )
 import Data.Word
+import qualified Data.Semigroup as Sem
 import Control.Exception ( IOException, throwIO, mask_, onException )
 import GHC.Conc ( closeFdWith, threadWaitReadSTM, atomically )
 import GHC.IO.Exception hiding ( IOException )
@@ -157,10 +157,15 @@ instance Hashable Watch where
 
 newtype Mask a = Mask Word32 deriving (Eq, Show, Typeable)
 
+instance Sem.Semigroup (Mask a) where
+    Mask a <> Mask b = Mask (a .|. b)
+
 -- | Computes the union of two 'Mask's.
 instance Monoid (Mask a) where
    mempty = Mask 0
-   mappend (Mask a) (Mask b) = Mask (a .|. b)
+#if !(MIN_VERSION_base(4,11,0))
+   mappend = (<>)
+#endif
 
 -- | An empty type used to denote 'Mask' values that can be received
 --   from the kernel in an inotify event message.
