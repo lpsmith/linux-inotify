@@ -79,6 +79,9 @@ import Prelude hiding (init)
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Monoid
+#endif
 import Data.Typeable
 import Data.Function ( on )
 import Data.Word
