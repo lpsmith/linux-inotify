@@ -8,3 +8,4 @@ dist/
 \#*\#
 .#*
 postgresql-simple-*.tar.gz
+.stack-work/
